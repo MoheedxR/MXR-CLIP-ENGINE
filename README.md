@@ -50,8 +50,8 @@ brew install ffmpeg
 # Ubuntu / Debian
 sudo apt install ffmpeg
 
-git clone https://github.com/YOUR-USER/mxr-clip-engine.git
-cd mxr-clip-engine
+git clone https://github.com/MoheedxR/MXR-CLIP-ENGINE.git
+cd MXR-CLIP-ENGINE
 pip install -r requirements.txt
 ./run.sh          # or: python3 run.py
 ```
