@@ -26,6 +26,7 @@ def _get_model():
                 config.WHISPER_MODEL,
                 device=config.WHISPER_DEVICE,
                 compute_type=config.WHISPER_COMPUTE_TYPE,
+                cpu_threads=config.WHISPER_THREADS,
             )
         return _model
 
@@ -71,7 +72,7 @@ def transcribe(audio_path: Path, duration: float,
     raw_segments, _info = model.transcribe(
         audio,
         vad_filter=True,
-        beam_size=5,
+        beam_size=config.WHISPER_BEAM_SIZE,
         word_timestamps=True,
     )
     words: list[tuple[float, float, str]] = []

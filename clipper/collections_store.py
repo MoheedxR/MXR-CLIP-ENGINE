@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from .fsutil import atomic_write_text
 
 STATUSES = ("Draft", "In review", "Ready", "Scheduled", "Posted")
 LABEL_COLORS = ("yellow", "cyan", "pink", "lime", "violet", "grey")
@@ -42,9 +43,7 @@ class CollectionStore:
     # --- persistence -------------------------------------------------------
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(self._data, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self.path)
+        atomic_write_text(self.path, json.dumps(self._data, indent=2, ensure_ascii=False))
 
     def _find(self, cid: str) -> dict:
         for c in self._data["collections"]:

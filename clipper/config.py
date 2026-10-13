@@ -33,6 +33,11 @@ APP_VERSION = "1.1.0"
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "auto")
 WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+# Beam size 1 (greedy) is several times faster on a CPU, with little loss on clear speech.
+# Set 5 for the most careful transcript.
+WHISPER_BEAM_SIZE = max(1, int(os.getenv("WHISPER_BEAM_SIZE", "1")))
+# Threads for the CPU model. Defaults to every core (capped at 16).
+WHISPER_THREADS = max(1, min(16, int(os.getenv("WHISPER_THREADS", str(os.cpu_count() or 4)))))
 
 LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")

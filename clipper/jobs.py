@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .pipeline import Params, Reporter, run_pipeline
+from .fsutil import atomic_write_text
 
 log = logging.getLogger(__name__)
 
@@ -46,9 +47,7 @@ class JobStore:
     def _save(self, job: dict) -> None:
         d = self.jobs_dir / job["id"]
         d.mkdir(parents=True, exist_ok=True)
-        tmp = d / "job.json.tmp"
-        tmp.write_text(json.dumps(job, indent=2, ensure_ascii=False))
-        tmp.replace(d / "job.json")
+        atomic_write_text(d / "job.json", json.dumps(job, indent=2, ensure_ascii=False))
 
     # --- API used by the server -------------------------------------------
     def create(self, params: Params, source_url: str | None, upload_name: str | None) -> dict:
