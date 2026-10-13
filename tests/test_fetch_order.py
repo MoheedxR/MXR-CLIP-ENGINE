@@ -43,14 +43,14 @@ def test_transcription_starts_before_full_video_finishes(tmp_path, monkeypatch):
     src_media = _make_media(tmp_path / "media.mp4")
     calls = []
 
-    def fake_audio(url, out_dir):
+    def fake_audio(url, out_dir, rate_limit=None):
         out_dir.mkdir(parents=True, exist_ok=True)
         target = out_dir / "audio_src.mp4"
         shutil.copy(src_media, target)
         calls.append("audio")
         return target, "Fast title"
 
-    def fake_video(url, out_dir, on_progress=None, max_height=None, prefer_fps=False):
+    def fake_video(url, out_dir, on_progress=None, max_height=None, prefer_fps=False, rate_limit=None):
         time.sleep(1.0)                      # a slow full download
         target = out_dir / "source.mp4"
         shutil.copy(src_media, target)
@@ -77,10 +77,10 @@ def test_falls_back_to_full_download_when_audio_fails(tmp_path, monkeypatch):
     src_media = _make_media(tmp_path / "media.mp4")
     calls = []
 
-    def broken_audio(url, out_dir):
+    def broken_audio(url, out_dir, rate_limit=None):
         raise RuntimeError("audio not available")
 
-    def fake_video(url, out_dir, on_progress=None, max_height=None, prefer_fps=False):
+    def fake_video(url, out_dir, on_progress=None, max_height=None, prefer_fps=False, rate_limit=None):
         out_dir.mkdir(parents=True, exist_ok=True)
         target = out_dir / "source.mp4"
         shutil.copy(src_media, target)

@@ -10,7 +10,8 @@ ProgressFn = Callable[[float, str], None]  # (fraction 0-1, human message)
 
 
 def download(url: str, out_dir: Path, on_progress: ProgressFn | None = None,
-             max_height: int | None = None, prefer_fps: bool = False) -> tuple[Path, str]:
+             max_height: int | None = None, prefer_fps: bool = False,
+             rate_limit: int | None = None) -> tuple[Path, str]:
     """Download the best MP4-compatible stream up to max_height.
 
     prefer_fps asks yt-dlp to favour higher frame-rate streams when several exist.
@@ -48,6 +49,8 @@ def download(url: str, out_dir: Path, on_progress: ProgressFn | None = None,
     }
     if prefer_fps:
         opts["format_sort"] = ["fps", "res", "br"]
+    if rate_limit:
+        opts["ratelimit"] = rate_limit  # bytes per second
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
     title = (info or {}).get("title") or "Untitled"
@@ -61,7 +64,7 @@ def download(url: str, out_dir: Path, on_progress: ProgressFn | None = None,
     return matches[0], title
 
 
-def download_audio(url: str, out_dir: Path) -> tuple[Path, str]:
+def download_audio(url: str, out_dir: Path, rate_limit: int | None = None) -> tuple[Path, str]:
     """Fetch only the audio track, which is much smaller and quicker than the video.
 
     Returns (audio_path, title). The file can be any container FFmpeg can read.
@@ -77,6 +80,8 @@ def download_audio(url: str, out_dir: Path) -> tuple[Path, str]:
         "no_warnings": True,
         "restrictfilenames": True,
     }
+    if rate_limit:
+        opts["ratelimit"] = rate_limit
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
     title = (info or {}).get("title") or "Untitled"

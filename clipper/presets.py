@@ -139,6 +139,13 @@ CAPTION_STYLES: dict[str, dict] = {
 
 CAPTION_POSITIONS = ("top", "middle", "bottom")
 
+# How fast the source video is downloaded. Applies to new projects.
+DOWNLOAD_LIMITS: dict[str, dict] = {
+    "full": {"label": "Full speed", "hint": "Uses all the bandwidth available", "bytes_per_sec": None},
+    "medium": {"label": "4 MB/s", "hint": "Leaves room for other downloads", "bytes_per_sec": 4_000_000},
+    "gentle": {"label": "1 MB/s", "hint": "Slow, for a weak or shared connection", "bytes_per_sec": 1_000_000},
+}
+
 ACCENT_COLORS: dict[str, str] = {
     "yellow": "#FFD400",
     "cyan": "#22D3EE",
@@ -166,6 +173,8 @@ def validate(params) -> None:
         raise ValueError(f"unknown platform '{params.platform}'")
     if params.quality not in QUALITY:
         raise ValueError(f"unknown quality '{params.quality}'")
+    if getattr(params, "download_limit", "full") not in DOWNLOAD_LIMITS:
+        raise ValueError(f"unknown download speed '{params.download_limit}'")
     if getattr(params, "quality_mode", "default") not in MODES:
         raise ValueError("quality mode must be default or custom")
     if getattr(params, "fps_mode", "default") not in MODES:

@@ -19,7 +19,7 @@ from .download import download, download_audio
 from .media import (MediaError, cut_clip, energy_profile, export_mp3, extract_audio,
                     extract_thumbnail, normalise_energy, probe_duration, probe_video)
 from .models import Candidate, Segment
-from .presets import PLATFORMS, rating_label, resolve_output, validate
+from .presets import DOWNLOAD_LIMITS, PLATFORMS, rating_label, resolve_output, validate
 from .scoring import score_candidate, select_diverse
 from .transcribe import transcribe
 
@@ -45,6 +45,7 @@ class Params:
     caption_uppercase: bool = False
     caption_color: str = "yellow"       # see presets.ACCENT_COLORS
     use_llm: bool = True
+    download_limit: str = "full"       # full | medium | gentle, see presets.DOWNLOAD_LIMITS
 
 
 class Reporter:
@@ -104,6 +105,7 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
     warnings: list[str] = []
     spec = resolve_output(params)
     platform = PLATFORMS[params.platform]
+    rate = DOWNLOAD_LIMITS[params.download_limit]["bytes_per_sec"]
 
     def warn(msg: str) -> None:
         warnings.append(msg)
@@ -123,7 +125,7 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
         rep.stage("downloading", 0.0, "Connecting to the video source")
         rep.log(f"Fetching the audio from {source_url} first, so speech recognition can start sooner")
         try:
-            audio_src, title = download_audio(source_url, job_dir / "audio_only")
+            audio_src, title = download_audio(source_url, job_dir / "audio_only", rate_limit=rate)
             rep.log(f'Got the audio for "{title}"', "success")
         except Exception as exc:  # fall back to the full download below
             log.warning("Audio-only fetch failed, using the full download: %s", exc)
@@ -131,14 +133,15 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
         if audio_src is not None:
             video_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clip-video")
             pending_video = video_pool.submit(download, source_url, job_dir, None,
-                                              spec["max_source"], spec["fps"] > 30)
+                                              spec["max_source"], spec["fps"] > 30, rate)
             rep.log("Downloading the full video in the background while speech is recognised")
         else:
             def dl_progress(frac: float, text: str) -> None:
                 rep.stage("downloading", 0.15 * frac, text)
 
             src, title = download(source_url, job_dir, on_progress=dl_progress,
-                                  max_height=spec["max_source"], prefer_fps=spec["fps"] > 30)
+                                  max_height=spec["max_source"], prefer_fps=spec["fps"] > 30,
+                                  rate_limit=rate)
             rep.log(f'Downloaded "{title}"', "success")
             audio_src = src
     else:

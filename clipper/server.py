@@ -53,6 +53,7 @@ class JobRequest(BaseModel):
     caption_uppercase: bool = False
     caption_color: str = "yellow"
     use_llm: bool = True
+    download_limit: str = "full"
 
     @field_validator("url")
     @classmethod
@@ -79,7 +80,7 @@ def _params(req: JobRequest) -> Params:
                     aspect_mode=req.aspect_mode, aspect=req.aspect,
                     caption_style=req.caption_style, caption_position=req.caption_position,
                     caption_uppercase=req.caption_uppercase, caption_color=req.caption_color,
-                    use_llm=req.use_llm)
+                    use_llm=req.use_llm, download_limit=req.download_limit)
     try:
         presets.validate(params)
     except ValueError as exc:
@@ -149,6 +150,7 @@ def get_config():
         "caption_styles": [{"id": k, **v} for k, v in presets.CAPTION_STYLES.items()],
         "caption_positions": list(presets.CAPTION_POSITIONS),
         "caption_colors": [{"id": k, "hex": v} for k, v in presets.ACCENT_COLORS.items()],
+        "download_limits": [{"id": k, "label": v["label"], "hint": v["hint"]} for k, v in presets.DOWNLOAD_LIMITS.items()],
         "collection_statuses": list(STATUSES),
         "label_colors": list(LABEL_COLORS),
     }
@@ -243,6 +245,7 @@ async def create_job_from_upload(
     caption_position: str = Form("bottom"),
     caption_uppercase: bool = Form(False),
     caption_color: str = Form("yellow"),
+    download_limit: str = Form("full"),
     use_llm: bool = Form(True),
 ):
     ext = Path(file.filename or "").suffix.lower()
@@ -256,7 +259,7 @@ async def create_job_from_upload(
                          aspect_mode=aspect_mode, aspect=aspect,
                          caption_style=caption_style, caption_position=caption_position,
                          caption_uppercase=caption_uppercase, caption_color=caption_color,
-                         use_llm=use_llm)
+                         use_llm=use_llm, download_limit=download_limit)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     params = _params(req)

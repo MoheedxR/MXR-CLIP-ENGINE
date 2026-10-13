@@ -78,7 +78,7 @@
     route: { view: "home" },
     form: { platform: "tiktok", quality: "quick", style: "highlight", position: "bottom", color: "yellow",
             qualityMode: "default", resolution: 1080, fpsMode: "default", fps: 30,
-            aspectMode: "default", aspect: "9:16" },
+            aspectMode: "default", aspect: "9:16", downloadLimit: "full" },
     busy: false,
     jobs: [],
     selectedId: null,
@@ -130,6 +130,8 @@
     if (!c) return;
     $("#quality-group").innerHTML = choiceButtons(c.qualities, state.form.quality, "q-choice");
     $("#platform-group").innerHTML = choiceButtons(c.platforms, state.form.platform, "p-choice");
+    $("#download-group").innerHTML = choiceButtons(c.download_limits, state.form.downloadLimit, "dl-choice");
+    syncDownloadHint();
     $("#style-group").innerHTML = c.caption_styles.map((s) => `<button type="button" class="style-card st-${esc(s.id)}" role="radio" aria-checked="${s.id === state.form.style}" data-id="${esc(s.id)}" title="${esc(s.hint)}">
         <span class="sc-demo"><span class="sc-w1">Hook</span> <span class="sc-w2">it fast</span></span>
         <span class="sc-name">${esc(s.label)}</span></button>`).join("");
@@ -245,6 +247,14 @@
   $("#platform-group").addEventListener("click", (e) => {
     const b = e.target.closest("[data-id]"); if (b) pickGroup("platform-group", "platform", b.dataset.id);
   });
+  $("#download-group").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-id]");
+    if (b) { pickGroup("download-group", "downloadLimit", b.dataset.id); syncDownloadHint(); }
+  });
+  function syncDownloadHint() {
+    const item = (state.config?.download_limits || []).find((x) => x.id === state.form.downloadLimit);
+    $("#download-hint").textContent = (item ? item.hint + ". " : "") + "Applies when the video is downloaded. It cannot change a video that is already downloaded.";
+  }
   $("#style-group").addEventListener("click", (e) => {
     const b = e.target.closest("[data-id]"); if (b) pickGroup("style-group", "style", b.dataset.id);
   });
@@ -317,6 +327,7 @@
       max_seconds: +pick.dataset.max,
       platform: state.form.platform,
       quality: state.form.quality,
+      download_limit: state.form.downloadLimit,
       quality_mode: state.form.qualityMode,
       resolution: state.form.resolution,
       fps_mode: state.form.fpsMode,
