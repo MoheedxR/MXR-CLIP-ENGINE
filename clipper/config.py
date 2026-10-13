@@ -50,6 +50,9 @@ WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 WHISPER_BEAM_SIZE = _int_env("WHISPER_BEAM_SIZE", 1, low=1, high=10)
 # Threads for the CPU model. Defaults to every core (capped at 16).
 WHISPER_THREADS = _int_env("WHISPER_THREADS", os.cpu_count() or 4, low=1, high=16)
+# Batched decoding runs several 30-second windows at once. About 5x faster on a CPU, same words.
+# Set 1 to use the simpler sequential decoder.
+WHISPER_BATCH_SIZE = _int_env("WHISPER_BATCH_SIZE", 8, low=1, high=32)
 
 LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")

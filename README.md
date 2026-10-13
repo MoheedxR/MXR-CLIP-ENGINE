@@ -67,6 +67,9 @@ Copy `.env.example` to `.env` and edit it. You don't need to change anything to 
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `WHISPER_MODEL` | `base` | Speech model: `tiny` (fastest), `base`, `small`, `medium`, `large-v3` (most accurate). |
+| `WHISPER_BATCH_SIZE` | `8` | Speech windows decoded at once. Faster on a CPU. Set `1` if memory runs low. |
+| `WHISPER_BEAM_SIZE` | `1` | `1` is fastest. `5` is more careful, but slower. |
+| `WHISPER_THREADS` | all cores | CPU threads for speech recognition. |
 | `WHISPER_DEVICE` | `auto` | Use `cuda` if you have an NVIDIA GPU. |
 | `LLM_API_KEY` | empty | Enables AI ranking. Any OpenAI-compatible provider works. |
 | `LLM_BASE_URL` | OpenAI | Change for OpenRouter, Groq, Ollama, or other providers. |

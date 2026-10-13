@@ -8,13 +8,14 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from . import config, llm
 from .candidates import build_candidates
 from .captions import build_ass
-from .download import download
+from .download import download, download_audio
 from .media import (MediaError, cut_clip, energy_profile, export_mp3, extract_audio,
                     extract_thumbnail, normalise_energy, probe_duration, probe_video)
 from .models import Candidate, Segment
@@ -112,17 +113,34 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
     clips_dir = job_dir / "clips"
     clips_dir.mkdir(exist_ok=True)
 
-    # 1. Source video -------------------------------------------------------
+    # 1. Get the audio first (small and quick), so transcription can start early ----
+    src: Path | None = None          # the full video, once it is on disk
+    audio_src: Path | None = None    # any file with the speech track
+    title = "Untitled"
+    pending_video = None             # Future for the full video, while it downloads
+    video_pool = None
     if source_url:
         rep.stage("downloading", 0.0, "Connecting to the video source")
-        rep.log(f"Fetching {source_url} (up to {spec['max_source']} px)")
+        rep.log(f"Fetching the audio from {source_url} first, so speech recognition can start sooner")
+        try:
+            audio_src, title = download_audio(source_url, job_dir / "audio_only")
+            rep.log(f'Got the audio for "{title}"', "success")
+        except Exception as exc:  # fall back to the full download below
+            log.warning("Audio-only fetch failed, using the full download: %s", exc)
+            rep.log("Audio-only fetch failed, so the full video is downloaded first", "warn")
+        if audio_src is not None:
+            video_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clip-video")
+            pending_video = video_pool.submit(download, source_url, job_dir, None,
+                                              spec["max_source"], spec["fps"] > 30)
+            rep.log("Downloading the full video in the background while speech is recognised")
+        else:
+            def dl_progress(frac: float, text: str) -> None:
+                rep.stage("downloading", 0.15 * frac, text)
 
-        def dl_progress(frac: float, text: str) -> None:
-            rep.stage("downloading", 0.15 * frac, text)
-
-        src, title = download(source_url, job_dir, on_progress=dl_progress,
-                              max_height=spec["max_source"], prefer_fps=spec["fps"] > 30)
-        rep.log(f'Downloaded "{title}"', "success")
+            src, title = download(source_url, job_dir, on_progress=dl_progress,
+                                  max_height=spec["max_source"], prefer_fps=spec["fps"] > 30)
+            rep.log(f'Downloaded "{title}"', "success")
+            audio_src = src
     else:
         rep.stage("downloading", 0.05, "Preparing your file")
         title = Path(upload_name).stem if upload_name else (upload.stem if upload else "Untitled")
@@ -130,16 +148,12 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
         if upload.resolve() != src.resolve():
             shutil.move(str(upload), src)
         rep.log(f'Received "{upload_name or upload.name}"', "success")
-
-    duration = probe_duration(src)
-    src_info = probe_video(src)
-    rep.log(f"Source is {_fmt(duration)} long, {src_info['width']}×{src_info['height']} at {src_info['fps']:g} fps")
-    for msg in _quality_warnings(src_info, spec):
-        warn(msg)
+        audio_src = src
 
     # 2. Audio and loudness -------------------------------------------------
     rep.stage("audio", 0.16, "Extracting audio track")
-    wav = extract_audio(src, job_dir / "audio.wav")
+    wav = extract_audio(audio_src, job_dir / "audio.wav")
+    audio_duration = probe_duration(audio_src)
     energy_z = normalise_energy(energy_profile(wav))
     rep.log("Extracted mono 16 kHz audio and mapped the loudness curve")
 
@@ -156,11 +170,24 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
             pct = int(frac * 100)
             rep.stage("transcribing", 0.18 + 0.37 * frac, f"Transcribing speech · {pct}%")
 
-        units = transcribe(wav, duration, on_progress=t_progress)
+        units = transcribe(wav, audio_duration, on_progress=t_progress)
         transcript_path.write_text(json.dumps([asdict(u) for u in units], ensure_ascii=False))
         rep.log(f"Transcribed {len(units):,} sentences", "success")
     if not units:
         raise MediaError("No speech was detected in this video, so no clips can be made.")
+
+    # 3b. Wait for the full video if it is still downloading ---------------
+    if pending_video is not None:
+        rep.stage("scoring", 0.55, "Finishing the video download")
+        src, _ = pending_video.result()
+        video_pool.shutdown(wait=False)
+        rep.log("Full video is ready", "success")
+
+    duration = probe_duration(src)
+    src_info = probe_video(src)
+    rep.log(f"Source is {_fmt(duration)} long, {src_info['width']}×{src_info['height']} at {src_info['fps']:g} fps")
+    for msg in _quality_warnings(src_info, spec):
+        warn(msg)
 
     # 4. Candidate windows + local scoring ----------------------------------
     rep.stage("scoring", 0.55, "Searching for strong moments")

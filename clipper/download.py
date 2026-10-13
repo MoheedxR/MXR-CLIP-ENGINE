@@ -59,3 +59,28 @@ def download(url: str, out_dir: Path, on_progress: ProgressFn | None = None,
     if not matches:
         raise RuntimeError("download finished but no video file was found")
     return matches[0], title
+
+
+def download_audio(url: str, out_dir: Path) -> tuple[Path, str]:
+    """Fetch only the audio track, which is much smaller and quicker than the video.
+
+    Returns (audio_path, title). The file can be any container FFmpeg can read.
+    """
+    import yt_dlp
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    opts = {
+        "format": "bestaudio/best",
+        "outtmpl": str(out_dir / "audio_src.%(ext)s"),
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "restrictfilenames": True,
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+    title = (info or {}).get("title") or "Untitled"
+    matches = [p for p in out_dir.glob("audio_src.*") if p.suffix not in {".part", ".ytdl"}]
+    if not matches:
+        raise RuntimeError("audio download finished but no audio file was found")
+    return matches[0], title

@@ -1,6 +1,7 @@
 """Local speech-to-text with faster-whisper, grouped into sentence-like units."""
 from __future__ import annotations
 
+import logging
 import threading
 from pathlib import Path
 from typing import Callable
@@ -8,6 +9,8 @@ from typing import Callable
 from . import config
 from .media import read_wav_float32
 from .models import Segment
+
+log = logging.getLogger(__name__)
 
 _model = None
 _model_lock = threading.Lock()
@@ -64,21 +67,51 @@ def group_words(words: list[tuple[float, float, str]]) -> list[Segment]:
     return units
 
 
+def warm_up() -> None:
+    """Load the speech model in the background, so the first job doesn't wait for it."""
+    try:
+        _get_model()
+    except Exception:  # a failed warm-up is retried, with its error, when a job needs it
+        log.exception("Speech model warm-up failed")
+
+
+def _collect(segments, duration: float, on_progress) -> list[tuple[float, float, str]]:
+    words: list[tuple[float, float, str]] = []
+    for seg in segments:
+        for w in seg.words or []:
+            words.append((float(w.start), float(w.end), w.word))
+        if on_progress and duration > 0:
+            on_progress(min(1.0, seg.end / duration))
+    return words
+
+
 def transcribe(audio_path: Path, duration: float,
                on_progress: Callable[[float], None] | None = None) -> list[Segment]:
     model = _get_model()
     # Pass samples rather than a path: avoids depending on PyAV's file decoder API.
     audio = read_wav_float32(audio_path)
-    raw_segments, _info = model.transcribe(
-        audio,
-        vad_filter=True,
-        beam_size=config.WHISPER_BEAM_SIZE,
-        word_timestamps=True,
-    )
-    words: list[tuple[float, float, str]] = []
-    for seg in raw_segments:
-        for w in seg.words or []:
-            words.append((float(w.start), float(w.end), w.word))
-        if on_progress and duration > 0:
-            on_progress(min(1.0, seg.end / duration))
+    words: list[tuple[float, float, str]] | None = None
+    if config.WHISPER_BATCH_SIZE > 1:
+        try:
+            from faster_whisper import BatchedInferencePipeline
+            batched = BatchedInferencePipeline(model=model)
+            segments, _info = batched.transcribe(
+                audio,
+                vad_filter=True,
+                beam_size=config.WHISPER_BEAM_SIZE,
+                batch_size=config.WHISPER_BATCH_SIZE,
+                word_timestamps=True,
+            )
+            words = _collect(segments, duration, on_progress)
+        except Exception:  # older faster-whisper or an unexpected error: use the simple decoder
+            log.exception("Batched transcription failed, using the sequential decoder")
+            words = None
+    if words is None:
+        segments, _info = model.transcribe(
+            audio,
+            vad_filter=True,
+            beam_size=config.WHISPER_BEAM_SIZE,
+            word_timestamps=True,
+        )
+        words = _collect(segments, duration, on_progress)
     return group_words(words)

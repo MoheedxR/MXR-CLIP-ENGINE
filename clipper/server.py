@@ -19,6 +19,14 @@ from .jobs import JobStore
 from .pipeline import Params
 
 app = FastAPI(title=config.APP_NAME, version=config.APP_VERSION)
+
+
+@app.on_event("startup")
+def _preload_speech_model() -> None:
+    """Load the speech model in the background, so the first job starts at once."""
+    import threading
+    from .transcribe import warm_up
+    threading.Thread(target=warm_up, name="whisper-warmup", daemon=True).start()
 store = JobStore(config.JOBS_DIR)
 collections = CollectionStore(config.COLLECTIONS_FILE)
 
