@@ -246,6 +246,23 @@
 
       <div class="alerts" id="alerts"></div>
 
+      <section class="card reformat-card" id="reformat" aria-labelledby="reformat-title" hidden>
+        <div class="card-head">
+          <div>
+            <h2 id="reformat-title">Change the format</h2>
+            <p class="muted-sm" id="reformat-sub">Available as soon as the clips are finished.</p>
+          </div>
+        </div>
+        <div class="ref-choices" id="ref-choices" aria-label="Aspect ratio"></div>
+        <form class="ref-custom" id="ref-custom" autocomplete="off">
+          <label for="ref-custom-input">Custom</label>
+          <input id="ref-custom-input" maxlength="7" placeholder="e.g. 4:3">
+          <button class="btn btn-ghost btn-sm" type="submit">Cut at this ratio</button>
+          <span class="ref-hint" id="ref-hint" aria-live="polite"></span>
+        </form>
+        <div id="ref-variants"></div>
+      </section>
+
       <div class="columns">
         <section class="card clips-card" aria-labelledby="clips-title">
           <div class="card-head">

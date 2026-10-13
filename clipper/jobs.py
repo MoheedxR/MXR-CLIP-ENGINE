@@ -12,6 +12,8 @@ from pathlib import Path
 
 from .pipeline import Params, Reporter, run_pipeline
 from .fsutil import atomic_write_text
+from .presets import parse_aspect
+from .variants import render_variant, source_ready
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +85,12 @@ class JobStore:
     def get(self, job_id: str) -> dict | None:
         with self._lock:
             job = self._jobs.get(job_id)
-            return json.loads(json.dumps(job)) if job else None
+            if not job:
+                return None
+            out = json.loads(json.dumps(job))
+        out.setdefault("variants", [])
+        out["source_ready"] = source_ready(self.job_dir(job_id))
+        return out
 
     def list_jobs(self) -> list[dict]:
         with self._lock:
@@ -108,6 +115,66 @@ class JobStore:
             del self._jobs[job_id]
         shutil.rmtree(self.jobs_dir / job_id, ignore_errors=True)
         return True
+
+    # --- reformatting a finished project ------------------------------------
+    def add_variant(self, job_id: str, aspect: str) -> dict:
+        """Queue the same clips in a new aspect ratio. Returns the new variant record.
+
+        Raises KeyError if the job is unknown, ValueError for a bad or unavailable request.
+        """
+        w, h = parse_aspect(aspect)                       # ValueError for a bad ratio
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise KeyError(job_id)
+            if job["status"] != "done":
+                raise ValueError("Finish the clips first, then change the format.")
+            if not job.get("clips"):
+                raise ValueError("This project has no clips to change.")
+            if not source_ready(self.job_dir(job_id)):
+                raise ValueError("The downloaded video is no longer in this project folder.")
+            variant = {
+                "id": uuid.uuid4().hex[:8],
+                "aspect": f"{w}:{h}",
+                "status": "queued",
+                "message": "Waiting to start",
+                "created_at": time.time(),
+                "clips": [],
+                "error": None,
+            }
+            job.setdefault("variants", []).append(variant)
+            self._save(job)
+        self._pool.submit(self._run_variant, job_id, variant["id"], f"{w}:{h}")
+        return variant
+
+    def _variant_update(self, job_id: str, variant_id: str, **fields) -> None:
+        with self._lock:
+            job = self._jobs[job_id]
+            for v in job.setdefault("variants", []):
+                if v["id"] == variant_id:
+                    v.update(fields)
+            self._save(job)
+
+    def _run_variant(self, job_id: str, variant_id: str, aspect: str) -> None:
+        self._variant_update(job_id, variant_id, status="running", message=f"Cutting clips at {aspect}")
+        job = self.get(job_id)
+        params = Params(**{k: v for k, v in job["params"].items() if k in Params.__dataclass_fields__})
+
+        def on_clip(record: dict) -> None:
+            with self._lock:
+                j = self._jobs[job_id]
+                for v in j.setdefault("variants", []):
+                    if v["id"] == variant_id:
+                        v["clips"].append(record)
+                self._save(j)
+
+        try:
+            render_variant(self.job_dir(job_id), job["clips"], params, variant_id, aspect, on_clip)
+            self._variant_update(job_id, variant_id, status="done", message="Ready")
+        except Exception as exc:  # show the failure on the variant, keep the project usable
+            log.exception("variant %s of job %s failed", variant_id, job_id)
+            self._variant_update(job_id, variant_id, status="failed", message="Could not change the format",
+                                 error=str(exc))
 
     # --- mutations used by the worker -------------------------------------
     def _update(self, job_id: str, **fields) -> None:

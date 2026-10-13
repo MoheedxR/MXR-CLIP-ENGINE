@@ -129,6 +129,12 @@ CAPTION_STYLES: dict[str, dict] = {
     "box": {"label": "Boxed", "hint": "White text on a dark bar"},
     "neon": {"label": "Neon", "hint": "White text with a coloured glow edge"},
     "minimal": {"label": "Minimal", "hint": "Small and clean"},
+    "karaoke": {"label": "Karaoke", "hint": "Colour sweeps across each word as it's said"},
+    "pop": {"label": "Pop in", "hint": "Each word pops in as it's spoken"},
+    "typewriter": {"label": "Typewriter", "hint": "Words appear one by one"},
+    "bounce": {"label": "Bounce", "hint": "Each phrase bounces into place"},
+    "fade": {"label": "Soft fade", "hint": "Phrases fade in and out"},
+    "caps": {"label": "Bold caps", "hint": "Big uppercase text with a heavy outline"},
 }
 
 CAPTION_POSITIONS = ("top", "middle", "bottom")

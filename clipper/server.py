@@ -17,6 +17,7 @@ from . import config, llm, presets
 from .collections_store import CollectionError, CollectionStore, LABEL_COLORS, NotFound, STATUSES
 from .jobs import JobStore
 from .pipeline import Params
+from .variants import ASPECT_CHOICES
 
 app = FastAPI(title=config.APP_NAME, version=config.APP_VERSION)
 
@@ -143,6 +144,7 @@ def get_config():
         "fps_options": list(presets.FPS_OPTIONS),
         "aspect_presets": list(presets.ASPECT_PRESETS),
         "aspect_default": presets.DEFAULT_ASPECT,
+        "aspect_choices": ASPECT_CHOICES,
         "qualities": [{"id": k, **{x: v[x] for x in ("label", "hint", "fps")}} for k, v in presets.QUALITY.items()],
         "caption_styles": [{"id": k, **v} for k, v in presets.CAPTION_STYLES.items()],
         "caption_positions": list(presets.CAPTION_POSITIONS),
@@ -163,6 +165,21 @@ def get_job(job_id: str):
     if not job:
         raise HTTPException(404, "job not found")
     return job
+
+
+class VariantRequest(BaseModel):
+    aspect: str = "9:16"
+
+
+@app.post("/api/jobs/{job_id}/variants", status_code=202)
+def create_variant(job_id: str, req: VariantRequest):
+    """Re-cut a finished project's clips in another aspect ratio."""
+    try:
+        return store.add_variant(job_id, req.aspect)
+    except KeyError:
+        raise HTTPException(404, "project not found")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
 
 @app.delete("/api/jobs/{job_id}", status_code=204)

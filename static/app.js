@@ -615,11 +615,83 @@
     $("#alerts").innerHTML = parts.join("");
   }
 
+  // ---------- change the format: re-cut clips from the downloaded video ----------
+  function variantStatus(v) {
+    return { queued: "Waiting", running: "Cutting…", done: "Ready", failed: "Failed" }[v.status] || v.status;
+  }
+
+  function renderReformat(job) {
+    const box = $("#reformat");
+    box.hidden = !job.source_ready;
+    if (!job.source_ready) return;
+    const done = job.status === "done";
+    $("#reformat-sub").textContent = done
+      ? "Re-cut these clips from the video you downloaded. Nothing is downloaded again."
+      : "Available as soon as the clips are finished.";
+    $("#ref-choices").innerHTML = (state.config?.aspect_choices || []).map((a) => {
+      const [w, h] = a.id.split(":").map(Number);
+      const k = 40 / Math.max(w, h);
+      return `<button type="button" class="choice ref-choice" data-aspect="${esc(a.id)}" title="${esc(a.hint || "")}" ${done ? "" : "disabled"}>
+        <span class="ref-shape" style="width:${Math.round(w * k)}px;height:${Math.round(h * k)}px" aria-hidden="true"></span>
+        <span class="ch-t">${esc(a.label)}</span><span class="ref-ratio">${esc(a.id)}</span></button>`;
+    }).join("");
+
+    // Rebuild the cut list only when something changed, so playing videos are not reset.
+    const variants = job.variants || [];
+    const clipCount = (job.clips || []).length;
+    const key = JSON.stringify([job.status, clipCount, variants.map((v) => [v.id, v.status, (v.clips || []).length])]);
+    if (key === state.refKey) return;
+    state.refKey = key;
+    $("#ref-variants").innerHTML = variants.slice().reverse().map((v) => {
+      const clips = v.clips || [];
+      const live = v.status === "queued" || v.status === "running";
+      let pend = "";
+      if (live) {
+        for (let i = 0; i < Math.max(0, clipCount - clips.length); i++) {
+          pend += pendingCard(clips.length + i + 1, clipCount, i === 0 && v.status === "running");
+        }
+      }
+      return `<div class="ref-variant">
+        <div class="ref-variant-head"><strong>${esc(v.aspect)}</strong><span class="ref-status ${esc(v.status)}">${esc(variantStatus(v))}</span></div>
+        ${v.error ? `<p class="ref-error">${esc(v.error)}</p>` : ""}
+        <div class="clips ref-clips">${clips.map((c) => clipCard(c)).join("")}${pend}</div>
+      </div>`;
+    }).join("");
+  }
+
+  async function requestVariant(aspect) {
+    const job = state.job;
+    if (!job || job.status !== "done") return;
+    $("#ref-hint").textContent = "";
+    try {
+      await api(`/api/jobs/${job.id}/variants`, sendJson("POST", { aspect }));
+      toast(`Cutting the clips at ${aspect}`);
+      state.variantsBusy = true;
+      state.refKey = null;
+      await refreshDetail();
+    } catch (err) {
+      $("#ref-hint").textContent = err.message;
+    }
+  }
+
+  $("#ref-choices").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-aspect]");
+    if (b && !b.disabled) requestVariant(b.dataset.aspect);
+  });
+  $("#ref-custom").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const r = parseAspectText($("#ref-custom-input").value);
+    if (r.error) { $("#ref-hint").textContent = r.error; return; }
+    requestVariant(r.value);
+  });
+
   function renderProject(job) {
     state.job = job;
     renderHeader(job);
     renderProgress(job);
     renderAlerts(job);
+    renderReformat(job);
+    state.variantsBusy = (job.variants || []).some((v) => v.status === "queued" || v.status === "running");
     renderClips(job);
     renderLog(job);
     $("#live").classList.toggle("off", TERMINAL.has(job.status));
@@ -634,6 +706,9 @@
     state.clipEls.clear();
     state.clipData.clear();
     $("#clips").innerHTML = "";
+    state.refKey = null;
+    $("#reformat").hidden = true;
+    $("#ref-variants").innerHTML = "";
     $("#console").innerHTML = "";
     $("#alerts").innerHTML = "";
     $("#jump").hidden = true;
@@ -662,7 +737,7 @@
     if (!id) return;
     const summary = state.jobs.find((j) => j.id === id);
     if (state.jobs.length && !summary) { location.hash = "#/"; return; }
-    if (summary && TERMINAL.has(summary.status) && state.detailLoadedFor === id) return;
+    if (summary && TERMINAL.has(summary.status) && state.detailLoadedFor === id && !state.variantsBusy) return;
     try {
       const job = await api(`/api/jobs/${id}`);
       if (state.selectedId !== id) return;
