@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MXR CLIP ENGINE</title>
+<meta name="description" content="Turn long videos into short, captioned clips ranked by engagement potential. Runs locally.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%238b7bff'/%3E%3Cstop offset='1' stop-color='%2322d3ee'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M13 10.5v11l9-5.5z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="ambient" aria-hidden="true"></div>
+
+<header class="topbar">
+  <a class="brand" href="#top" aria-label="MXR CLIP ENGINE home">
+    <span class="logo" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M7 4.5v15a1 1 0 0 0 1.55.84l11.2-7.5a1 1 0 0 0 0-1.68L8.55 3.66A1 1 0 0 0 7 4.5z" fill="currentColor"/></svg>
+    </span>
+    <span class="brand-name">MXR CLIP ENGINE</span>
+  </a>
+  <div class="top-actions">
+    <span class="engine-pill" id="engine-pill"><span class="dot"></span><span id="engine-text">Connecting…</span></span>
+    <button class="btn btn-ghost btn-sm" id="new-btn" type="button">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      New project
+    </button>
+  </div>
+</header>
+
+<div class="app" id="top">
+  <!-- ============ Sidebar: create + projects ============ -->
+  <aside class="sidebar">
+    <section class="card create-card" aria-labelledby="create-title">
+      <div class="card-head">
+        <h2 id="create-title">New clips</h2>
+        <span class="muted-sm">Takes a few minutes</span>
+      </div>
+
+      <form id="create-form" novalidate>
+        <div class="segmented" role="tablist" aria-label="Video source">
+          <button type="button" role="tab" id="tab-link" aria-controls="panel-link" aria-selected="true" data-tab="link">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
+            Link
+          </button>
+          <button type="button" role="tab" id="tab-file" aria-controls="panel-file" aria-selected="false" data-tab="file">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+            File
+          </button>
+        </div>
+
+        <div id="panel-link" role="tabpanel" aria-labelledby="tab-link" class="field-block">
+          <input class="input" id="url" type="url" inputmode="url" autocomplete="off" placeholder="Paste a YouTube or Vimeo link" aria-label="Video link">
+          <p class="hint">Works with YouTube, Vimeo and most video sites.</p>
+        </div>
+
+        <div id="panel-file" role="tabpanel" aria-labelledby="tab-file" class="field-block" hidden>
+          <label class="dropzone" id="dropzone">
+            <input type="file" id="file" accept="video/*,audio/*,.mp4,.mov,.mkv,.webm,.m4v,.mp3,.wav,.m4a">
+            <span id="dz-empty" class="dz-empty">
+              <span class="dz-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+              </span>
+              <span class="dz-title">Drop a video here</span>
+              <span class="dz-sub">or click to browse · MP4, MOV, MKV, WebM</span>
+            </span>
+            <span id="dz-file" class="dz-file" hidden>
+              <span class="dz-file-icon" aria-hidden="true">▶</span>
+              <span class="dz-file-meta"><span id="dz-name"></span></span>
+              <button type="button" id="dz-clear" aria-label="Remove file">✕</button>
+            </span>
+          </label>
+        </div>
+
+        <span class="label" id="length-label">Clip length</span>
+        <div class="length-grid" role="group" aria-labelledby="length-label">
+          <button type="button" class="pick" data-min="30" data-max="60" aria-pressed="false">
+            <span class="pick-t">30–60s</span><span class="pick-s">Punchy</span>
+          </button>
+          <button type="button" class="pick" data-min="60" data-max="90" aria-pressed="false">
+            <span class="pick-t">60–90s</span><span class="pick-s">Full ideas</span>
+          </button>
+          <button type="button" class="pick" data-min="30" data-max="120" aria-pressed="true">
+            <span class="pick-t">30–120s</span><span class="pick-s">Best fit</span>
+          </button>
+        </div>
+
+        <div class="settings">
+          <label class="setting">
+            <span class="setting-label">Number of clips</span>
+            <select id="count" aria-label="Number of clips">
+              <option value="3">3</option>
+              <option value="5" selected>5</option>
+              <option value="8">8</option>
+              <option value="10">10</option>
+            </select>
+          </label>
+          <label class="setting toggle-row">
+            <span><span class="setting-label">Vertical 9:16</span><span class="setting-sub">Crop for Shorts, Reels, TikTok</span></span>
+            <input type="checkbox" class="switch" id="vertical" checked>
+          </label>
+          <label class="setting toggle-row">
+            <span><span class="setting-label">Burn in captions</span><span class="setting-sub">Word-accurate subtitles on the video</span></span>
+            <input type="checkbox" class="switch" id="captions">
+          </label>
+          <label class="setting toggle-row" id="ai-row">
+            <span><span class="setting-label">AI ranking</span><span class="setting-sub" id="ai-sub">Uses an LLM to refine picks</span></span>
+            <input type="checkbox" class="switch" id="use_llm" checked>
+          </label>
+        </div>
+
+        <button class="btn btn-primary btn-block" id="submit" type="submit">
+          <span id="submit-label">Create clips</span>
+          <svg id="submit-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </form>
+    </section>
+
+    <section class="card projects-card" aria-labelledby="projects-title">
+      <div class="card-head">
+        <h2 id="projects-title">Projects</h2>
+        <span class="count-badge" id="projects-count">0</span>
+      </div>
+      <ul class="projects" id="projects">
+        <li class="projects-empty">Your projects will appear here.</li>
+      </ul>
+    </section>
+  </aside>
+
+  <!-- ============ Main ============ -->
+  <main class="main">
+    <!-- Empty state -->
+    <section class="welcome" id="welcome">
+      <p class="kicker">Long video in · short clips out</p>
+      <h1>Find the moments<br>people actually <span class="grad">watch</span></h1>
+      <p class="lead">Add a video. The engine transcribes it, scores every 30–120 second window for hook, energy and clarity, then renders the best ones as ready-to-post clips.</p>
+      <div class="steps-3">
+        <div class="step-card">
+          <span class="step-num">01</span>
+          <h3>Add a video</h3>
+          <p>Paste a link or drop a file. Nothing leaves your machine unless you enable AI ranking.</p>
+        </div>
+        <div class="step-card">
+          <span class="step-num">02</span>
+          <h3>Watch it work</h3>
+          <p>See progress live, with an activity log of every step the engine takes.</p>
+        </div>
+        <div class="step-card">
+          <span class="step-num">03</span>
+          <h3>Preview & post</h3>
+          <p>Each clip appears as soon as it renders. Download the MP4 and captions.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Project view -->
+    <section class="project" id="project" hidden>
+      <header class="project-head">
+        <div class="project-titles">
+          <p class="kicker" id="p-kicker">Project</p>
+          <h1 id="p-title">Untitled</h1>
+          <div class="chips" id="p-chips"></div>
+        </div>
+        <span class="status" id="p-status"><span class="dot"></span><span id="p-status-text">Queued</span></span>
+      </header>
+
+      <div class="card progress-card" id="progress-card">
+        <div class="progress-top">
+          <div>
+            <div class="progress-msg" id="p-msg" aria-live="polite">Waiting for the engine</div>
+            <div class="progress-sub" id="p-sub"></div>
+          </div>
+          <div class="progress-num"><span id="p-pct">0</span><small>%</small></div>
+        </div>
+        <div class="bar" role="progressbar" aria-label="Overall progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="bar">
+          <div class="bar-fill" id="bar-fill"></div>
+        </div>
+        <ol class="stages" id="stages">
+          <li data-stage="0"><span class="st-dot"></span>Download</li>
+          <li data-stage="1"><span class="st-dot"></span>Transcribe</li>
+          <li data-stage="2"><span class="st-dot"></span>Find moments</li>
+          <li data-stage="3"><span class="st-dot"></span>Render clips</li>
+        </ol>
+      </div>
+
+      <div class="alerts" id="alerts"></div>
+
+      <div class="columns">
+        <section class="card clips-card" aria-labelledby="clips-title">
+          <div class="card-head">
+            <h2 id="clips-title">Clips</h2>
+            <span class="count-badge" id="clips-count">0 / 0</span>
+          </div>
+          <div class="clips" id="clips"></div>
+        </section>
+
+        <section class="card console-card" aria-labelledby="log-title">
+          <div class="card-head">
+            <h2 id="log-title">Activity</h2>
+            <span class="live" id="live"><span class="dot"></span><span id="live-text">Live</span></span>
+          </div>
+          <div class="console" id="console" role="log" aria-live="off"></div>
+          <button class="jump" id="jump" type="button" hidden>Jump to latest ↓</button>
+        </section>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer class="footer">
+  <span>MXR CLIP ENGINE · runs on your machine</span>
+  <span>Only process videos you have the rights to use.</span>
+</footer>
+
+<!-- Expanded preview -->
+<dialog id="preview" class="preview-dialog" aria-labelledby="preview-title">
+  <div class="preview-inner">
+    <div class="preview-head">
+      <div>
+        <div class="kicker" id="preview-kicker"></div>
+        <h3 id="preview-title"></h3>
+      </div>
+      <button class="icon-btn" type="button" id="preview-close" aria-label="Close preview">✕</button>
+    </div>
+    <video id="preview-video" controls playsinline></video>
+    <div class="preview-foot">
+      <p id="preview-reason"></p>
+      <a class="btn btn-primary btn-sm" id="preview-download" download>Download MP4</a>
+    </div>
+  </div>
+</dialog>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

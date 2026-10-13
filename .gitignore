@@ -1,0 +1,26 @@
+# Local user data and secrets
+data/
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Media produced during testing
+*.mp4
+*.mov
+*.mkv
+*.wav
+*.mp3
+!docs/*.png
