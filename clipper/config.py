@@ -17,7 +17,19 @@ def _load_dotenv(path: Path) -> None:
             continue
         key, _, value = line.partition("=")
         value = value.strip().strip('"').strip("'")
+        if not value:
+            continue  # a blank line means "use the default", not an empty value
         os.environ.setdefault(key.strip(), value)
+
+
+def _int_env(name: str, default: int, low: int = 1, high: int = 10**6) -> int:
+    """Read an integer setting. Blank or invalid values fall back to the default."""
+    raw = (os.getenv(name) or "").strip()
+    try:
+        value = int(raw) if raw else default
+    except ValueError:
+        value = default
+    return max(low, min(high, value))
 
 
 _load_dotenv(ROOT / ".env")
@@ -35,15 +47,15 @@ WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "auto")
 WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 # Beam size 1 (greedy) is several times faster on a CPU, with little loss on clear speech.
 # Set 5 for the most careful transcript.
-WHISPER_BEAM_SIZE = max(1, int(os.getenv("WHISPER_BEAM_SIZE", "1")))
+WHISPER_BEAM_SIZE = _int_env("WHISPER_BEAM_SIZE", 1, low=1, high=10)
 # Threads for the CPU model. Defaults to every core (capped at 16).
-WHISPER_THREADS = max(1, min(16, int(os.getenv("WHISPER_THREADS", str(os.cpu_count() or 4)))))
+WHISPER_THREADS = _int_env("WHISPER_THREADS", os.cpu_count() or 4, low=1, high=16)
 
 LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 
-MAX_DOWNLOAD_HEIGHT = int(os.getenv("MAX_DOWNLOAD_HEIGHT", "1080"))
+MAX_DOWNLOAD_HEIGHT = _int_env("MAX_DOWNLOAD_HEIGHT", 1080, low=144, high=4320)
 
 # Clip length limits from the product spec (seconds)
 MIN_CLIP_SECONDS = 30.0
