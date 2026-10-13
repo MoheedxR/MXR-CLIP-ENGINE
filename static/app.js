@@ -430,7 +430,7 @@
     renderClips(job);
     renderLog(job);
     $("#live").classList.toggle("off", TERMINAL.has(job.status));
-    $("#live-text").textContent = TERMINAL.has(job.status) ? "Stopped" : "Live";
+    $("#live-text").textContent = job.status === "done" ? "Finished" : job.status === "failed" ? "Stopped" : "Live";
   }
 
   function resetProjectView() {
