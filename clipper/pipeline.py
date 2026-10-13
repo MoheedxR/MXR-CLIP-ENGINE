@@ -18,7 +18,7 @@ from .download import download
 from .media import (MediaError, cut_clip, energy_profile, export_mp3, extract_audio,
                     extract_thumbnail, normalise_energy, probe_duration, probe_video)
 from .models import Candidate, Segment
-from .presets import PLATFORMS, QUALITY, rating_label, validate
+from .presets import PLATFORMS, rating_label, resolve_output, validate
 from .scoring import score_candidate, select_diverse
 from .transcribe import transcribe
 
@@ -32,6 +32,12 @@ class Params:
     max_seconds: float = config.MAX_CLIP_SECONDS
     platform: str = "tiktok"            # tiktok | shorts | reels
     quality: str = "quick"              # quick | 4k30 | fps60 | fps120
+    quality_mode: str = "default"       # default | custom (custom uses resolution)
+    resolution: int = 1080              # short side in px, when quality_mode is custom
+    fps_mode: str = "default"           # default | custom (custom uses fps)
+    fps: int = 30                       # when fps_mode is custom
+    aspect_mode: str = "default"        # default | custom (custom uses aspect)
+    aspect: str = "9:16"                # "W:H", when aspect_mode is custom
     captions: bool = False
     caption_style: str = "highlight"    # see presets.CAPTION_STYLES
     caption_position: str = "bottom"    # top | middle | bottom
@@ -71,15 +77,17 @@ def watch_rate_for(c: Candidate) -> tuple[float, str]:
     return round(c.heuristic, 1), "local"
 
 
-def _quality_warnings(src_info: dict, quality: dict, fps_wanted: int) -> list[str]:
+def _quality_warnings(src_info: dict, spec: dict) -> list[str]:
     msgs: list[str] = []
     src_h, src_w = src_info["height"], src_info["width"]
-    crop_w = min(src_w, src_h * 9 / 16)
-    if crop_w < quality["width"]:
-        msgs.append(f"The source is {src_w}×{src_h}, so the 9:16 crop is about {int(crop_w)} px wide. "
-                    f"It will be upscaled to {quality['width']} px, which softens the picture.")
-    if quality["height"] > 2000 and src_h < 2000:
+    aw, ah = spec["aspect"]
+    crop_w = min(src_w, src_h * aw / ah)
+    if crop_w < spec["width"]:
+        msgs.append(f"The source is {src_w}×{src_h}, so the {aw}:{ah} crop is about {int(crop_w)} px wide. "
+                    f"It will be upscaled to {spec['width']} px, which softens the picture.")
+    if spec["short"] >= 2160 and min(src_w, src_h) < 2000:
         msgs.append("The source is below 4K. The 4K output is upscaled, so it adds size, not detail.")
+    fps_wanted = spec["fps"]
     if fps_wanted > 30 and src_info["fps"] < fps_wanted * 0.8:
         msgs.append(f"The source runs at {src_info['fps']:g} fps. A {fps_wanted} fps export repeats frames, "
                     "so motion will not be smoother than the source.")
@@ -93,7 +101,7 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
     validate(params)
     rep = reporter or NullReporter()
     warnings: list[str] = []
-    quality = QUALITY[params.quality]
+    spec = resolve_output(params)
     platform = PLATFORMS[params.platform]
 
     def warn(msg: str) -> None:
@@ -107,13 +115,13 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
     # 1. Source video -------------------------------------------------------
     if source_url:
         rep.stage("downloading", 0.0, "Connecting to the video source")
-        rep.log(f"Fetching {source_url} (up to {quality['max_source']} px)")
+        rep.log(f"Fetching {source_url} (up to {spec['max_source']} px)")
 
         def dl_progress(frac: float, text: str) -> None:
             rep.stage("downloading", 0.15 * frac, text)
 
         src, title = download(source_url, job_dir, on_progress=dl_progress,
-                              max_height=quality["max_source"], prefer_fps=quality["fps"] > 30)
+                              max_height=spec["max_source"], prefer_fps=spec["fps"] > 30)
         rep.log(f'Downloaded "{title}"', "success")
     else:
         rep.stage("downloading", 0.05, "Preparing your file")
@@ -126,7 +134,7 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
     duration = probe_duration(src)
     src_info = probe_video(src)
     rep.log(f"Source is {_fmt(duration)} long, {src_info['width']}×{src_info['height']} at {src_info['fps']:g} fps")
-    for msg in _quality_warnings(src_info, quality, quality["fps"]):
+    for msg in _quality_warnings(src_info, spec):
         warn(msg)
 
     # 2. Audio and loudness -------------------------------------------------
@@ -208,12 +216,12 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
         if params.captions:
             ass = clips_dir / f"{stem}.ass"
             ass.write_text(build_ass(
-                units, c.start, c.end, width=quality["width"], height=quality["height"],
+                units, c.start, c.end, width=spec["width"], height=spec["height"],
                 style=params.caption_style, position=params.caption_position,
                 uppercase=params.caption_uppercase, accent=params.caption_color,
-                bottom_margin=platform["caption_bottom"]), encoding="utf-8")
-        cut_kwargs = dict(width=quality["width"], height=quality["height"], fps=quality["fps"],
-                          crf=quality["crf"], preset=quality["preset"])
+                bottom_margin=round(platform["caption_bottom"] * spec["height"] / 1920)), encoding="utf-8")
+        cut_kwargs = dict(width=spec["width"], height=spec["height"], fps=spec["fps"],
+                          crf=spec["crf"], preset=spec["preset"], ratio=spec["aspect"])
         try:
             cut_clip(src, out_mp4, c.start, c.end, subtitles=ass, **cut_kwargs)
         except MediaError:
@@ -223,7 +231,7 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
             cut_clip(src, out_mp4, c.start, c.end, subtitles=None, **cut_kwargs)
             ass = None
         mp3 = None
-        if quality["mp3"]:
+        if spec["mp3"]:
             mp3 = export_mp3(src, clips_dir / f"{stem}.mp3", c.start, c.end)
         thumb = extract_thumbnail(src, c.start + min(2.0, c.duration / 2), clips_dir / f"{stem}.jpg")
         record = _clip_record(rank, stem, c, out_mp4, ass, thumb, mp3, units, job_dir, params)
@@ -266,6 +274,7 @@ def _clip_record(rank: int, stem: str, c: Candidate, mp4: Path, ass: Path | None
         "transcript": c.text,
         "platform": params.platform,
         "quality": params.quality,
+        "output": resolve_output(params)["description"],
         "watch_rate": watch,
         "watch_rate_source": source,
         "rating": rating_label(watch),

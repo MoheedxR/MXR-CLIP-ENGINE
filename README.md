@@ -16,8 +16,9 @@ MXR CLIP ENGINE runs on your own computer. Paste a YouTube or Vimeo link, or dro
 - **Activity log.** A running, timestamped log of downloads, transcription, scoring, and rendering.
 - **Engagement-first picking.** Clips are chosen by hook, energy, pace, completeness and length, with no overlaps.
 - **Platform presets.** One 9:16 output sized for TikTok, YouTube Shorts or Instagram Reels, with caption margins that stay clear of each app's UI.
-- **Quality options.** Quick MP4 with an MP3 of each clip, 4K at 30 fps, 60 fps, or 120 fps.
+- **Quality, frame rate and aspect ratio.** Each has a Default / Custom switch. Default uses the quality preset (quick MP4 with an MP3, 4K at 30 fps, 60 fps, or 120 fps) and 9:16. Custom lets you pick a resolution (720p, 1080p, 1440p or 4K, measured on the short side), a frame rate (24, 25, 30, 50, 60 or 120 fps), and any aspect ratio from 2:5 to 5:2 (for example 4:5, 1:1 or 16:9). Clips are centre-cropped to the ratio.
 - **Captions.** Word-timed captions with five styles (word highlight, classic, boxed, neon, minimal), top, middle or bottom placement, optional UPPERCASE and an accent colour. Each clip also gets an `.ass` caption file.
+- **Projects menu.** The top-right **Projects** button opens Collections, New project (the clip form), and Clips (a library of every finished clip, with preview, download and add-to-collection).
 - **Collections.** Group clips from any project into collections. Rename them, set a label, status (Draft, In review, Ready, Scheduled, Posted), notes, and order. Deleting a project removes its clips from collections.
 - **Private by default.** Transcription runs locally with Whisper. Nothing is sent to the cloud unless you turn on AI ranking.
 - **Optional AI ranking.** Use any OpenAI-compatible model to rate hooks and write titles.

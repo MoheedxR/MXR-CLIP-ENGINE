@@ -102,14 +102,17 @@ def write_srt(segments: list[Segment], window_start: float, window_end: float, o
 
 
 def cut_clip(src: Path, out: Path, start: float, end: float, *, width: int, height: int,
-             fps: int, crf: int, preset: str, subtitles: Path | None = None) -> Path:
-    """Render [start, end] as a vertical MP4 (9:16 centre crop).
+             fps: int, crf: int, preset: str, subtitles: Path | None = None,
+             ratio: tuple[int, int] = (9, 16)) -> Path:
+    """Render [start, end] as an MP4, centre-cropped to the aspect ratio.
 
     subtitles is an ASS file, burned in by libass. It is referenced by filename
     and ffmpeg runs from its folder, which avoids path-escaping problems.
     """
+    rw, rh = ratio
+    r = rw / rh
     filters = [
-        "crop=w='min(iw,ih*9/16)':h=ih",
+        f"crop=w='min(iw,ih*{r:.6f})':h='min(ih,iw/{r:.6f})'",
         f"scale={width}:{height}:flags=lanczos",
         f"fps={fps}",
     ]

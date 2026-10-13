@@ -76,7 +76,9 @@
   const state = {
     config: null,
     route: { view: "home" },
-    form: { platform: "tiktok", quality: "quick", style: "highlight", position: "bottom", color: "yellow" },
+    form: { platform: "tiktok", quality: "quick", style: "highlight", position: "bottom", color: "yellow",
+            qualityMode: "default", resolution: 1080, fpsMode: "default", fps: 30,
+            aspectMode: "default", aspect: "9:16" },
     busy: false,
     jobs: [],
     selectedId: null,
@@ -133,6 +135,7 @@
         <span class="sc-name">${esc(s.label)}</span></button>`).join("");
     $("#position-group").innerHTML = c.caption_positions.map((p) => `<button type="button" class="choice" role="radio" aria-checked="${p === state.form.position}" data-id="${esc(p)}"><span class="ch-t">${esc(p[0].toUpperCase() + p.slice(1))}</span></button>`).join("");
     $("#color-group").innerHTML = swatchButtons(c.caption_colors.map((x) => x.id), state.form.color, (id) => LABEL_HEX[id] || c.caption_colors.find((x) => x.id === id).hex);
+    renderOutputGroups(c);
     $("#coll-new-colors").innerHTML = swatchButtons(c.label_colors, "", (id) => LABEL_HEX[id]);
     $("#coll-new-status").innerHTML = c.collection_statuses.map((s) => `<option>${esc(s)}</option>`).join("");
     $("#coll-new-status").value = "Draft";
@@ -144,12 +147,56 @@
     if (!c) return;
     const q = c.qualities.find((x) => x.id === state.form.quality);
     const p = c.platforms.find((x) => x.id === state.form.platform);
-    $("#quality-hint").textContent = q ? q.hint : "";
     $("#platform-hint").textContent = p ? p.hint : "";
+    syncOutputUI();
     const style = state.form.style;
     const color = state.form.color;
     $("#style-group").style.setProperty("--cap", LABEL_HEX[color] || "#FFD400");
     $("#color-group").style.setProperty("--cap", LABEL_HEX[color] || "#FFD400");
+  }
+
+  // ---------- custom output: quality, frame rate, aspect ratio ----------
+  const SEG_KEYS = { quality: "qualityMode", fps: "fpsMode", aspect: "aspectMode" };
+  function parseAspectText(text) {
+    const m = /^\s*(\d{1,2})\s*[:/x]\s*(\d{1,2})\s*$/.exec(text || "");
+    if (!m) return { error: "Use width:height, for example 4:5" };
+    const w = +m[1], h = +m[2];
+    if (!w || !h) return { error: "Both sides must be at least 1" };
+    if (w / h < 0.4 || w / h > 2.5) return { error: "Keep the ratio between 2:5 and 5:2" };
+    return { value: `${w}:${h}` };
+  }
+  function renderOutputGroups(c) {
+    $("#resolution-group").innerHTML = c.resolutions.map((r) => `<button type="button" class="choice" role="radio" aria-checked="${r.id === state.form.resolution}" data-id="${r.id}"><span class="ch-t">${esc(r.label)}</span></button>`).join("");
+    $("#fps-group").innerHTML = c.fps_options.map((f) => `<button type="button" class="choice" role="radio" aria-checked="${f === state.form.fps}" data-id="${f}"><span class="ch-t">${f} fps</span></button>`).join("");
+    $("#aspect-group").innerHTML = c.aspect_presets.map((a) => `<button type="button" class="choice" role="radio" aria-checked="${a === state.form.aspect}" data-id="${esc(a)}"><span class="ch-t">${esc(a)}</span></button>`).join("");
+    $("#aspect-input").value = state.form.aspect;
+    syncOutputUI();
+  }
+  function syncOutputUI() {
+    const f = state.form;
+    const qCustom = f.qualityMode === "custom";
+    const fCustom = f.fpsMode === "custom";
+    const aCustom = f.aspectMode === "custom";
+    const q = state.config?.qualities.find((x) => x.id === f.quality);
+    $("#quality-group").hidden = qCustom;
+    $("#resolution-group").hidden = !qCustom;
+    $("#quality-hint").textContent = qCustom
+      ? "The short side of the picture, in pixels. Custom quality also exports an MP3 of each clip."
+      : (q ? q.hint : "");
+    $("#fps-group").hidden = !fCustom;
+    $("#fps-default-hint").hidden = fCustom;
+    $("#fps-default-hint").textContent = `Follows the quality preset: ${qCustom ? 30 : (q ? q.fps : 30)} fps.`;
+    $("#aspect-custom").hidden = !aCustom;
+    $("#aspect-default-hint").hidden = aCustom;
+    $("#aspect-default-hint").textContent = "9:16 for every platform.";
+    $("#platform-sub").textContent = aCustom ? "· custom aspect" : "· all 9:16";
+    if (aCustom) {
+      const r = parseAspectText($("#aspect-input").value);
+      $("#aspect-hint").textContent = r.value ? `Clips are cropped to ${r.value} from the centre.` : r.error;
+    }
+  }
+  function markChoice(groupSel, id) {
+    $$(`${groupSel} [data-id]`).forEach((x) => x.setAttribute("aria-checked", String(x.dataset.id === String(id))));
   }
 
   function pickGroup(groupId, key, value) {
@@ -161,6 +208,40 @@
   $("#quality-group").addEventListener("click", (e) => {
     const b = e.target.closest("[data-id]"); if (b) pickGroup("quality-group", "quality", b.dataset.id);
   });
+  $$(".seg[data-setting]").forEach((seg) => seg.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-mode]");
+    if (!b) return;
+    state.form[SEG_KEYS[seg.dataset.setting]] = b.dataset.mode;
+    $$(`.seg[data-setting="${seg.dataset.setting}"] [data-mode]`).forEach((x) => x.setAttribute("aria-checked", String(x === b)));
+    syncOutputUI();
+  }));
+  $("#resolution-group").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-id]");
+    if (!b) return;
+    state.form.resolution = +b.dataset.id;
+    markChoice("#resolution-group", b.dataset.id);
+  });
+  $("#fps-group").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-id]");
+    if (!b) return;
+    state.form.fps = +b.dataset.id;
+    markChoice("#fps-group", b.dataset.id);
+  });
+  $("#aspect-group").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-id]");
+    if (!b) return;
+    state.form.aspect = b.dataset.id;
+    $("#aspect-input").value = b.dataset.id;
+    markChoice("#aspect-group", b.dataset.id);
+    syncOutputUI();
+  });
+  $("#aspect-input").addEventListener("input", (e) => {
+    const r = parseAspectText(e.target.value);
+    if (r.value) state.form.aspect = r.value;
+    markChoice("#aspect-group", r.value || "");
+    syncOutputUI();
+  });
+
   $("#platform-group").addEventListener("click", (e) => {
     const b = e.target.closest("[data-id]"); if (b) pickGroup("platform-group", "platform", b.dataset.id);
   });
@@ -236,6 +317,12 @@
       max_seconds: +pick.dataset.max,
       platform: state.form.platform,
       quality: state.form.quality,
+      quality_mode: state.form.qualityMode,
+      resolution: state.form.resolution,
+      fps_mode: state.form.fpsMode,
+      fps: state.form.fps,
+      aspect_mode: state.form.aspectMode,
+      aspect: state.form.aspect,
       captions: $("#captions").checked,
       caption_style: state.form.style,
       caption_position: state.form.position,
@@ -248,6 +335,11 @@
   $("#create-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     if (state.busy) return;
+    if (state.form.aspectMode === "custom") {
+      const r = parseAspectText($("#aspect-input").value);
+      if (!r.value) { toast(`Aspect ratio: ${r.error}`, "err"); $("#aspect-input").focus(); return; }
+      state.form.aspect = r.value;
+    }
     const isLink = $("#tab-link").getAttribute("aria-selected") === "true";
     const common = formValues();
 
@@ -348,7 +440,7 @@
   function clipCard(c) {
     const f = c.files || {};
     const platform = state.config?.platforms.find((p) => p.id === c.platform)?.label;
-    const quality = state.config?.qualities.find((q) => q.id === c.quality)?.label;
+    const quality = c.output || state.config?.qualities.find((q) => q.id === c.quality)?.label;
     const meta = [`${fmtClock(c.start)} → ${fmtClock(c.end)}`, `${Math.round(c.duration)}s`, platform, quality].filter(Boolean);
     return `<article class="clip" data-id="${esc(c.id)}">
       <div class="clip-media">
@@ -467,7 +559,10 @@
       p.min_seconds != null ? `<span class="chip">${esc(p.min_seconds)}–${esc(p.max_seconds)}s</span>` : "",
       p.count ? `<span class="chip">Up to ${esc(p.count)} clips</span>` : "",
       plat ? `<span class="chip">${esc(plat.label)} · 9:16</span>` : "",
-      qual ? `<span class="chip">${esc(qual.label)}</span>` : "",
+      p.quality_mode !== "custom" && qual ? `<span class="chip">${esc(qual.label)}</span>` : "",
+      p.quality_mode === "custom" ? `<span class="chip">${esc(cfg.resolutions?.find((r) => r.id === p.resolution)?.label || p.resolution)} custom</span>` : "",
+      p.fps_mode === "custom" ? `<span class="chip">${esc(p.fps)} fps</span>` : "",
+      p.aspect_mode === "custom" ? `<span class="chip">${esc(p.aspect)} aspect</span>` : "",
       p.captions ? `<span class="chip">Captions${style ? ` · ${esc(style.label)}` : ""}</span>` : "",
       job.llm_used ? `<span class="chip ai">AI ranked</span>` : "",
       job.source_duration ? `<span class="chip">Source ${fmtSpan(job.source_duration)}</span>` : "",
@@ -988,6 +1083,102 @@
     };
   }
 
+  // ---------- Projects dropdown ----------
+  const projectsBtn = $("#projects-btn");
+  const projectsMenu = $("#projects-menu");
+  function setMenu(open) {
+    projectsMenu.hidden = !open;
+    projectsBtn.setAttribute("aria-expanded", String(open));
+    if (open) projectsMenu.querySelector(".menu-item")?.focus();
+  }
+  projectsBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setMenu(projectsMenu.hidden);
+  });
+  projectsMenu.addEventListener("click", (e) => {
+    const item = e.target.closest("[data-go]");
+    if (!item) return;
+    setMenu(false);
+    const go = item.dataset.go;
+    if (go === "collections") location.hash = "#/collections";
+    else if (go === "clips") location.hash = "#/clips";
+    else {
+      // New project: the clip form lives on the home view, so go there and focus the link field.
+      location.hash = "#/";
+      setTimeout(() => {
+        window.scrollTo({ top: 0 });
+        $("#url").focus({ preventScroll: true });
+      }, 80);
+    }
+  });
+  document.addEventListener("click", (e) => {
+    if (!$("#menu-wrap").contains(e.target)) setMenu(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !projectsMenu.hidden) {
+      setMenu(false);
+      projectsBtn.focus();
+    }
+  });
+
+  // ---------- Clips library ----------
+  function libraryCard(c) {
+    const plat = state.config?.platforms.find((x) => x.id === c.platform)?.label;
+    const rate = c.watch_rate != null
+      ? `<span class="meta-rate r-${RATING_CLASS[c.rating] || "fair"}">${pct(c.watch_rate)} · ${esc(c.rating || "")}</span>`
+      : `<span class="muted-sm">Not rated</span>`;
+    const meta = [rate, c.duration ? `${Math.round(c.duration)}s` : "", plat ? esc(plat) : ""].filter(Boolean).join(" · ");
+    const ids = `data-job="${esc(c.job_id)}" data-clip="${esc(c.clip_id)}"`;
+    return `<article class="lib-card">
+      <button class="lib-media" type="button" data-lib-play ${ids} aria-label="Preview ${esc(c.title)}">
+        ${c.thumbnail ? `<img src="${esc(mediaUrl(c.thumbnail))}" alt="" loading="lazy">` : `<span class="lib-none">▶</span>`}
+        <span class="lib-play" aria-hidden="true">▶</span>
+      </button>
+      <div class="lib-body">
+        <div class="lib-title">${esc(c.title || "Untitled clip")}</div>
+        <div class="lib-sub">${esc(c.source_title || "Untitled project")}</div>
+        <div class="lib-meta">${meta}</div>
+        <div class="lib-actions">
+          <button class="btn btn-ghost btn-sm" type="button" data-lib-play ${ids}>Preview</button>
+          <a class="btn btn-ghost btn-sm" href="${esc(mediaUrl(c.video))}" download>Download</a>
+          <button class="btn btn-ghost btn-sm" type="button" data-lib-add ${ids}>+ Collection</button>
+        </div>
+      </div>
+    </article>`;
+  }
+
+  async function loadClips() {
+    try {
+      state.libraryClips = await api("/api/clips");
+    } catch (err) {
+      toast(err.message, "err");
+      state.libraryClips = state.libraryClips || [];
+    }
+    const clips = state.libraryClips;
+    $("#lib-count").textContent = clips.length;
+    $("#lib-empty").hidden = clips.length > 0;
+    $("#lib-grid").innerHTML = clips.map(libraryCard).join("");
+  }
+
+  $("#lib-grid").addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-lib-play],[data-lib-add]");
+    if (!btn) return;
+    const c = (state.libraryClips || []).find((x) => x.job_id === btn.dataset.job && x.clip_id === btn.dataset.clip);
+    if (!c) return;
+    if (btn.hasAttribute("data-lib-play")) {
+      openPreview({
+        video: c.video,
+        poster: c.thumbnail,
+        title: c.title,
+        reason: c.reason,
+        kicker: [c.source_title, c.duration ? `${Math.round(c.duration)}s` : "", c.watch_rate != null ? `watch rate ${pct(c.watch_rate)} (${c.rating})` : ""].filter(Boolean).join(" · "),
+        links: [c.audio && { href: c.audio, label: "MP3" }, c.captions && { href: c.captions, label: "Captions" }].filter(Boolean),
+      });
+    } else {
+      openCollectionPicker({ job_id: c.job_id, clip_id: c.clip_id, title: c.title });
+    }
+  });
+
   // ---------- routing ----------
   function parseRoute() {
     const h = location.hash.replace(/^#/, "");
@@ -999,17 +1190,15 @@
     }
     m = h.match(/^job\/([a-z0-9]+)$/i);
     if (m) return { view: "job", id: m[1] };
+    if (/^\/?clips$/i.test(h)) return { view: "clips" };
     return { view: "home" };
   }
 
   function showView(view) {
-    const map = { home: "#view-home", job: "#view-job", collections: "#view-collections", collection: "#view-collection" };
+    const map = { home: "#view-home", job: "#view-job", collections: "#view-collections", collection: "#view-collection", clips: "#view-clips" };
     for (const [k, sel] of Object.entries(map)) $(sel).hidden = k !== view;
     document.body.dataset.view = view;
-    const sidebarVisible = view === "home" || view === "job";
-    $("#sidebar").hidden = !sidebarVisible;
-    $("#nav-clips").toggleAttribute("aria-current", sidebarVisible);
-    $("#nav-collections").toggleAttribute("aria-current", !sidebarVisible);
+    $("#sidebar").hidden = !(view === "home" || view === "job");
   }
 
   function onRoute() {
@@ -1039,6 +1228,7 @@
       loadCollections().then(() => { if (r.isNew) setNewCollectionOpen(true); });
       if (r.isNew) setNewCollectionOpen(true);
     }
+    if (r.view === "clips") loadClips();
     if (r.view === "collection") {
       if (!prev || prev.view !== "collection" || prev.id !== r.id || !state.collection || state.collection.id !== r.id) {
         state.collection = null;

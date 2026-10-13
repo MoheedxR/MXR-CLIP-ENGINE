@@ -6,7 +6,7 @@
 <title>MXR CLIP ENGINE</title>
 <meta name="description" content="Turn long videos into short, captioned clips ranked by estimated watch rate. Runs locally.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%238b7bff'/%3E%3Cstop offset='1' stop-color='%2322d3ee'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M13 10.5v11l9-5.5z' fill='white'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/app.css?v=1.2.2">
 </head>
 <body data-view="home">
 <div class="ambient" aria-hidden="true"></div>
@@ -20,12 +20,26 @@
   </a>
   <nav class="top-actions" aria-label="Main">
     <span class="engine-pill" id="engine-pill"><span class="dot"></span><span id="engine-text">Connecting…</span></span>
-    <a class="nav-link" id="nav-clips" href="#/">Clips</a>
-    <a class="nav-link" id="nav-collections" href="#/collections">Collections</a>
-    <a class="btn btn-primary btn-sm" id="new-btn" href="#/collections?new=1">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-      New project
-    </a>
+    <div class="menu-wrap" id="menu-wrap">
+      <button class="btn btn-primary btn-sm" id="projects-btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="projects-menu">
+        Projects
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="menu" id="projects-menu" role="menu" hidden>
+        <button class="menu-item" role="menuitem" type="button" data-go="collections">
+          <span class="mi-icon" aria-hidden="true">▦</span>
+          <span class="mi-text"><strong>Collections</strong><span>Group, label and order your clips</span></span>
+        </button>
+        <button class="menu-item" role="menuitem" type="button" data-go="new">
+          <span class="mi-icon" aria-hidden="true">＋</span>
+          <span class="mi-text"><strong>New project</strong><span>Turn a link or file into clips</span></span>
+        </button>
+        <button class="menu-item" role="menuitem" type="button" data-go="clips">
+          <span class="mi-icon" aria-hidden="true">▶</span>
+          <span class="mi-text"><strong>Clips</strong><span>Every finished clip in one place</span></span>
+        </button>
+      </div>
+    </div>
   </nav>
 </header>
 
@@ -80,11 +94,45 @@
           </button>
         </div>
 
-        <span class="label" id="quality-label">Quality</span>
+        <div class="setting-head">
+          <span class="label" id="quality-label">Quality</span>
+          <div class="seg" data-setting="quality" role="radiogroup" aria-label="Quality: default or custom">
+            <button type="button" role="radio" aria-checked="true" data-mode="default">Default</button>
+            <button type="button" role="radio" aria-checked="false" data-mode="custom">Custom</button>
+          </div>
+        </div>
         <div class="choice-grid choice-4" role="radiogroup" aria-labelledby="quality-label" id="quality-group"></div>
+        <div class="choice-grid choice-4" role="radiogroup" aria-labelledby="quality-label" id="resolution-group" hidden></div>
         <p class="hint" id="quality-hint"></p>
 
-        <span class="label" id="platform-label">Platform <span class="label-sub">· all 9:16</span></span>
+        <div class="setting-head">
+          <span class="label" id="fps-label">Frame rate</span>
+          <div class="seg" data-setting="fps" role="radiogroup" aria-label="Frame rate: default or custom">
+            <button type="button" role="radio" aria-checked="true" data-mode="default">Default</button>
+            <button type="button" role="radio" aria-checked="false" data-mode="custom">Custom</button>
+          </div>
+        </div>
+        <p class="hint" id="fps-default-hint"></p>
+        <div class="choice-grid choice-6" role="radiogroup" aria-labelledby="fps-label" id="fps-group" hidden></div>
+
+        <div class="setting-head">
+          <span class="label" id="aspect-label">Aspect ratio <span class="label-sub" id="platform-sub">· all 9:16</span></span>
+          <div class="seg" data-setting="aspect" role="radiogroup" aria-label="Aspect ratio: default or custom">
+            <button type="button" role="radio" aria-checked="true" data-mode="default">Default</button>
+            <button type="button" role="radio" aria-checked="false" data-mode="custom">Custom</button>
+          </div>
+        </div>
+        <p class="hint" id="aspect-default-hint"></p>
+        <div id="aspect-custom" hidden>
+          <div class="aspect-row">
+            <input class="input aspect-input" id="aspect-input" value="9:16" maxlength="7" autocomplete="off"
+                   placeholder="e.g. 4:5" aria-labelledby="aspect-label" spellcheck="false">
+            <div class="aspect-chips choice-grid" role="radiogroup" aria-label="Aspect ratio presets" id="aspect-group"></div>
+          </div>
+          <p class="hint" id="aspect-hint"></p>
+        </div>
+
+        <span class="label" id="platform-label">Platform</span>
         <div class="choice-grid choice-3" role="radiogroup" aria-labelledby="platform-label" id="platform-group"></div>
         <p class="hint" id="platform-hint"></p>
 
@@ -228,6 +276,23 @@
       </div>
     </section>
 
+    <!-- Clips library -->
+    <section class="clips-page" id="view-clips" hidden>
+      <header class="page-head">
+        <div>
+          <p class="kicker">Library</p>
+          <h1>Clips</h1>
+          <p class="lead">Every finished clip across your projects. Preview, download, or add a clip to a collection.</p>
+        </div>
+        <span class="count-badge" id="lib-count">0</span>
+      </header>
+      <div class="lib-grid" id="lib-grid"></div>
+      <div class="coll-empty" id="lib-empty" hidden>
+        <strong>No clips yet</strong>
+        <span>Create a project and its clips will show up here.</span>
+      </div>
+    </section>
+
     <!-- Collections list -->
     <section class="collections" id="view-collections" hidden>
       <header class="page-head">
@@ -321,6 +386,6 @@
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=1.2.2"></script>
 </body>
 </html>

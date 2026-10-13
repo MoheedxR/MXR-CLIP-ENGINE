@@ -32,6 +32,12 @@ class JobRequest(BaseModel):
     max_seconds: float = Field(config.MAX_CLIP_SECONDS, ge=10, le=600)
     platform: str = "tiktok"
     quality: str = "quick"
+    quality_mode: str = "default"
+    resolution: int = 1080
+    fps_mode: str = "default"
+    fps: int = 30
+    aspect_mode: str = "default"
+    aspect: str = "9:16"
     captions: bool = False
     caption_style: str = "highlight"
     caption_position: str = "bottom"
@@ -59,6 +65,9 @@ class JobRequest(BaseModel):
 def _params(req: JobRequest) -> Params:
     params = Params(count=req.count, min_seconds=req.min_seconds, max_seconds=req.max_seconds,
                     platform=req.platform, quality=req.quality, captions=req.captions,
+                    quality_mode=req.quality_mode, resolution=req.resolution,
+                    fps_mode=req.fps_mode, fps=req.fps,
+                    aspect_mode=req.aspect_mode, aspect=req.aspect,
                     caption_style=req.caption_style, caption_position=req.caption_position,
                     caption_uppercase=req.caption_uppercase, caption_color=req.caption_color,
                     use_llm=req.use_llm)
@@ -122,6 +131,10 @@ def get_config():
         "min_seconds": config.MIN_CLIP_SECONDS,
         "max_seconds": config.MAX_CLIP_SECONDS,
         "platforms": [{"id": k, **{x: v[x] for x in ("label", "hint")}} for k, v in presets.PLATFORMS.items()],
+        "resolutions": [{"id": k, "label": v["label"]} for k, v in presets.RESOLUTIONS.items()],
+        "fps_options": list(presets.FPS_OPTIONS),
+        "aspect_presets": list(presets.ASPECT_PRESETS),
+        "aspect_default": presets.DEFAULT_ASPECT,
         "qualities": [{"id": k, **{x: v[x] for x in ("label", "hint", "fps")}} for k, v in presets.QUALITY.items()],
         "caption_styles": [{"id": k, **v} for k, v in presets.CAPTION_STYLES.items()],
         "caption_positions": list(presets.CAPTION_POSITIONS),
@@ -165,9 +178,14 @@ def list_clips():
             continue
         full = store.get(job["id"]) or {}
         for clip in full.get("clips", []):
+            files = clip.get("files", {})
             out.append({"job_id": job["id"], "clip_id": clip["id"], "title": clip["title"],
                         "source_title": full.get("source_title"), "watch_rate": clip.get("watch_rate"),
-                        "rating": clip.get("rating"), "thumbnail": clip["files"].get("thumbnail")})
+                        "rating": clip.get("rating"), "duration": clip.get("duration"),
+                        "platform": clip.get("platform"), "quality": clip.get("quality"), "output": clip.get("output"),
+                        "reason": clip.get("reason"), "created_at": job.get("created_at"),
+                        "video": files.get("video"), "thumbnail": files.get("thumbnail"),
+                        "audio": files.get("audio"), "captions": files.get("captions")})
     return out
 
 
@@ -189,6 +207,12 @@ async def create_job_from_upload(
     max_seconds: float = Form(config.MAX_CLIP_SECONDS),
     platform: str = Form("tiktok"),
     quality: str = Form("quick"),
+    quality_mode: str = Form("default"),
+    resolution: int = Form(1080),
+    fps_mode: str = Form("default"),
+    fps: int = Form(30),
+    aspect_mode: str = Form("default"),
+    aspect: str = Form("9:16"),
     captions: bool = Form(False),
     caption_style: str = Form("highlight"),
     caption_position: str = Form("bottom"),
@@ -202,6 +226,9 @@ async def create_job_from_upload(
     try:
         req = JobRequest(count=count, min_seconds=min_seconds, max_seconds=max_seconds,
                          platform=platform, quality=quality, captions=captions,
+                         quality_mode=quality_mode, resolution=resolution,
+                         fps_mode=fps_mode, fps=fps,
+                         aspect_mode=aspect_mode, aspect=aspect,
                          caption_style=caption_style, caption_position=caption_position,
                          caption_uppercase=caption_uppercase, caption_color=caption_color,
                          use_llm=use_llm)
@@ -279,7 +306,7 @@ def add_entry(cid: str, body: EntryAdd):
         "watch_rate_source": clip.get("watch_rate_source"),
         "rating": clip.get("rating"),
         "platform": clip.get("platform"),
-        "quality": clip.get("quality"),
+        "quality": clip.get("quality"), "output": clip.get("output"),
         "video": clip["files"].get("video"),
         "thumbnail": clip["files"].get("thumbnail"),
         "audio": clip["files"].get("audio"),

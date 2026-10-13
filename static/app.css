@@ -540,17 +540,10 @@ details.tr p { margin-top: 8px; color: var(--muted); max-height: 120px; overflow
 [hidden] { display: none !important; }
 
 /* Top navigation */
-.nav-link {
-  color: var(--muted); text-decoration: none; font-weight: 600; font-size: 13.5px;
-  padding: 8px 12px; border-radius: 10px; transition: color .15s, background .15s;
-}
-.nav-link:hover { color: var(--text); background: rgba(255,255,255,.05); }
-.nav-link[aria-current] { color: var(--text); background: var(--surface-3); box-shadow: 0 0 0 1px var(--border-2); }
 .top-actions .btn-primary { margin-left: 4px; }
 @media (max-width: 640px) {
   .top-actions { gap: 6px; }
   .top-actions .engine-pill { display: none; }
-  .nav-link { padding: 6px 8px; font-size: 12.5px; }
   .top-actions .btn-sm { padding: 0 12px; height: 36px; font-size: 13px; }
 }
 
@@ -787,3 +780,93 @@ a.icon-btn { text-decoration: none; }
 @media (max-width: 1040px) {
   body[data-view="collections"] .app, body[data-view="collection"] .app { padding: 16px; }
 }
+
+/* =====================================================================
+   v1.2: Projects dropdown and Clips library
+   ===================================================================== */
+body[data-view="clips"] .app { grid-template-columns: minmax(0, 1fr); max-width: 1120px; }
+@media (max-width: 1040px) { body[data-view="clips"] .app { padding: 16px; } }
+
+.menu-wrap { position: relative; }
+.menu-wrap > .btn svg { margin-left: 2px; transition: transform .15s; }
+.menu-wrap > .btn[aria-expanded="true"] svg { transform: rotate(180deg); }
+.menu {
+  position: absolute; right: 0; top: calc(100% + 10px); z-index: 60;
+  width: 300px; padding: 6px; border-radius: 16px;
+  background: var(--surface); border: 1px solid var(--border-2);
+  box-shadow: 0 30px 80px -20px rgba(0,0,0,.9);
+  animation: enter .18s cubic-bezier(.2,.7,.2,1) both;
+}
+.menu-item {
+  display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px;
+  border: 0; border-radius: 11px; background: transparent; color: var(--text);
+  text-align: left; cursor: pointer; font: inherit;
+}
+.menu-item:hover, .menu-item:focus-visible { background: rgba(255,255,255,.06); outline: none; }
+.menu-item:focus-visible { box-shadow: 0 0 0 2px var(--accent-2) inset; }
+.mi-icon {
+  width: 34px; height: 34px; flex: none; border-radius: 10px; display: grid; place-items: center;
+  background: var(--surface-3); border: 1px solid var(--border-2); color: #a9b6ff; font-size: 14px;
+}
+.mi-text { display: flex; flex-direction: column; min-width: 0; }
+.mi-text strong { font-size: 14px; font-weight: 700; }
+.mi-text span { font-size: 12px; color: var(--muted); }
+@media (max-width: 640px) { .menu { width: min(300px, calc(100vw - 32px)); } }
+
+.lib-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 16px; margin-top: 22px;
+}
+.lib-card {
+  display: flex; flex-direction: column; overflow: hidden; border-radius: 16px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  transition: transform .2s, border-color .2s;
+}
+.lib-card:hover { transform: translateY(-2px); border-color: var(--border-2); }
+.lib-media {
+  position: relative; display: block; width: 100%; aspect-ratio: 9 / 16; max-height: 380px;
+  padding: 0; border: 0; background: var(--bg-2); cursor: pointer; overflow: hidden;
+}
+.lib-media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lib-none { display: grid; place-items: center; height: 100%; color: var(--dim); font-size: 22px; }
+.lib-play {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center;
+  background: rgba(7,8,12,.72); color: #fff; font-size: 15px; padding-left: 3px;
+  border: 1px solid rgba(255,255,255,.18); transition: transform .15s, background .15s;
+}
+.lib-media:hover .lib-play { transform: translate(-50%, -50%) scale(1.06); background: rgba(139,123,255,.85); }
+.lib-body { display: flex; flex-direction: column; gap: 6px; padding: 12px 12px 12px; flex: 1; }
+.lib-title { font-weight: 700; font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; }
+.lib-sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lib-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 8px; }
+.lib-actions .btn { height: 34px; padding: 0 10px; font-size: 12.5px; flex: 1 1 auto; }
+
+/* =====================================================================
+   v1.2.1: default / custom switches for quality, frame rate, aspect ratio
+   ===================================================================== */
+.setting-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap; margin-top: 18px;
+}
+.setting-head .label { margin: 0; }
+.seg { display: inline-flex; gap: 6px; }
+.seg [data-mode] {
+  display: flex; align-items: center; padding: 6px 11px; border-radius: 9px;
+  background: var(--bg-2); border: 1px solid var(--border-2); color: var(--text-2);
+  font: inherit; font-size: 12px; font-weight: 700; line-height: 1; cursor: pointer;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.seg [data-mode]:hover { border-color: rgba(255,255,255,.22); color: var(--text); }
+.seg [data-mode][aria-checked="true"] {
+  border-color: rgba(139,123,255,.75); background: rgba(139,123,255,.12);
+  box-shadow: 0 0 0 3px rgba(139,123,255,.12); color: var(--text);
+}
+.seg [data-mode]:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
+.choice-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+@media (max-width: 640px) { .choice-6 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.aspect-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.aspect-input { width: 130px; text-align: center; font-variant-numeric: tabular-nums; }
+.aspect-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 260px; }
+.aspect-chips .choice { flex: 0 0 auto; }
