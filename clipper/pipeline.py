@@ -175,18 +175,27 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
     rep.log("Scored every candidate on hook, energy, pace, completeness and length")
 
     # 5. Shortlist, then optional LLM re-rank -------------------------------
-    shortlist = select_diverse(ranked, max(params.count * 3, 12))
+    ai_on = params.use_llm and llm.llm_enabled()
+    pool = max(params.count * 3, 12)
+    if ai_on:
+        # The AI judges the moments the local scores pick, so give it a wider pool to choose from.
+        pool = max(pool, config.LLM_SHORTLIST)
+    shortlist = select_diverse(ranked, pool)
     rep.log(f"Shortlisted {len(shortlist)} moments that don't overlap", "success")
     for c in shortlist[:3]:
         snippet = " ".join(c.text.split())[:90]
         rep.log(f'{c.heuristic:4.1f}  {_fmt(c.start)}  "{snippet}…"', "detail")
 
-    if params.use_llm and llm.llm_enabled():
+    ai_ran = False
+    if ai_on:
         rep.stage("ranking", 0.62, "AI is reviewing the shortlist")
-        rep.log(f"Sending {len(shortlist)} moments to {config.LLM_MODEL} for hook, clarity and watch-rate review")
+        rep.log(f"Sending {len(shortlist)} moments to {config.LLM_MODEL} to pick the ones worth posting")
         try:
             llm.rerank(shortlist)
-            rep.log("AI review complete. Titles, reasons and watch-rate estimates added", "success")
+            ai_ran = True
+            kept_n = sum(1 for c in shortlist if c.llm and c.llm.get("keep", True))
+            rep.log(f"AI kept {kept_n} of {len(shortlist)} moments and added titles, reasons and watch-rate estimates",
+                    "success")
         except Exception as exc:  # network / auth / bad JSON: fall back gracefully
             log.exception("LLM re-rank failed")
             warn(f"AI review failed, using local scores only: {exc}")
@@ -197,7 +206,11 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
 
     for c in shortlist:
         c.final = llm.combined_score(c)
-    final = select_diverse(sorted(shortlist, key=lambda c: c.final, reverse=True), params.count)
+    if ai_ran and not any(c.llm and c.llm.get("keep", True) for c in shortlist):
+        warn("The AI rejected every moment it reviewed, so these picks use local scores only.")
+        final = select_diverse(sorted(shortlist, key=lambda c: c.final, reverse=True), params.count)
+    else:
+        final = llm.select_final(shortlist, params.count)
     if len(final) < params.count:
         warn(f"Found {len(final)} strong moment{'s' if len(final) != 1 else ''} in this video, "
              f"fewer than the {params.count} you asked for. Longer videos usually yield more.")

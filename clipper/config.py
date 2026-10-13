@@ -54,6 +54,8 @@ WHISPER_THREADS = _int_env("WHISPER_THREADS", os.cpu_count() or 4, low=1, high=1
 LLM_API_KEY = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+# How many candidate moments the AI reviews before it picks. More gives it more to choose from.
+LLM_SHORTLIST = _int_env("LLM_SHORTLIST", 36, low=6, high=200)
 
 MAX_DOWNLOAD_HEIGHT = _int_env("MAX_DOWNLOAD_HEIGHT", 1080, low=144, high=4320)
 

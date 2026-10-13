@@ -21,7 +21,7 @@ MXR CLIP ENGINE runs on your own computer. Paste a YouTube or Vimeo link, or dro
 - **Projects menu.** The top-right **Projects** button opens Collections, New project (the clip form), and Clips (a library of every finished clip, with preview, download and add-to-collection).
 - **Collections.** Group clips from any project into collections. Rename them, set a label, status (Draft, In review, Ready, Scheduled, Posted), notes, and order. Deleting a project removes its clips from collections.
 - **Private by default.** Transcription runs locally with Whisper. Nothing is sent to the cloud unless you turn on AI ranking.
-- **Optional AI ranking.** Use any OpenAI-compatible model to rate hooks and write titles.
+- **Optional AI picking.** Turn on AI ranking and the model reads the strongest candidate moments, keeps only the ones it would post itself (strong hook, clear payoff, makes sense on its own), and writes a title and reason for each.
 
 ## Requirements
 
@@ -71,6 +71,7 @@ Copy `.env.example` to `.env` and edit it. You don't need to change anything to 
 | `LLM_API_KEY` | empty | Enables AI ranking. Any OpenAI-compatible provider works. |
 | `LLM_BASE_URL` | OpenAI | Change for OpenRouter, Groq, Ollama, or other providers. |
 | `LLM_MODEL` | `gpt-4o-mini` | Model used for AI ranking. |
+| `LLM_SHORTLIST` | `36` | How many candidate moments the AI reviews. More gives it more to choose from, at higher cost. |
 | `MAX_DOWNLOAD_HEIGHT` | `1080` | Highest video resolution to download from links. |
 | `CLIPPER_DATA_DIR` | `./data` | Where projects and clips are stored. |
 | `PORT` | `8000` | Port to run on. |
@@ -100,7 +101,7 @@ It isn't a crystal ball. It uses signals that tend to hold attention in short-fo
 | Length | 10% | Sweet spot 45 to 90 seconds |
 | Closure | 8% | A question that gets answered inside the clip |
 
-Long silences and quiet stretches are penalised. With AI ranking on, the top moments are reviewed by the model and the final score blends both views. Weights live in `clipper/scoring.py` and are easy to tune.
+Long silences and quiet stretches are penalised. With AI ranking on, the model reviews a wider set of moments (`LLM_SHORTLIST`), rejects weak ones, and the final score blends its view with the local score. Moments the AI rejects are never picked, and if it rejects everything the app says so and falls back to local scores. Weights live in `clipper/scoring.py` and are easy to tune.
 
 Scores are a guide, not a guarantee. Real performance depends on your audience, topic and platform.
 
