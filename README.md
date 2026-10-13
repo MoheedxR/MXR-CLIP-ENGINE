@@ -12,10 +12,13 @@ MXR CLIP ENGINE runs on your own computer. Paste a YouTube or Vimeo link, or dro
 
 - **One-click start.** `python run.py` checks your setup and opens the app in your browser.
 - **Live progress.** A progress bar, step tracker, and elapsed timer show where the job is.
-- **Clips as they're made.** Each clip appears with a live preview as it finishes, with an engagement score.
+- **Clips as they're made.** Each clip appears with a live preview as it finishes, with an estimated watch rate from worst to best.
 - **Activity log.** A running, timestamped log of downloads, transcription, scoring, and rendering.
 - **Engagement-first picking.** Clips are chosen by hook, energy, pace, completeness and length, with no overlaps.
-- **Ready to post.** 9:16 vertical crop, optional word-level captions burned in, `.srt` files and thumbnails.
+- **Platform presets.** One 9:16 output sized for TikTok, YouTube Shorts or Instagram Reels, with caption margins that stay clear of each app's UI.
+- **Quality options.** Quick MP4 with an MP3 of each clip, 4K at 30 fps, 60 fps, or 120 fps.
+- **Captions.** Word-timed captions with five styles (word highlight, classic, boxed, neon, minimal), top, middle or bottom placement, optional UPPERCASE and an accent colour. Each clip also gets an `.ass` caption file.
+- **Collections.** Group clips from any project into collections. Rename them, set a label, status (Draft, In review, Ready, Scheduled, Posted), notes, and order. Deleting a project removes its clips from collections.
 - **Private by default.** Transcription runs locally with Whisper. Nothing is sent to the cloud unless you turn on AI ranking.
 - **Optional AI ranking.** Use any OpenAI-compatible model to rate hooks and write titles.
 
@@ -73,6 +76,15 @@ Copy `.env.example` to `.env` and edit it. You don't need to change anything to 
 | `HOST` | `127.0.0.1` | Set to `0.0.0.0` to open the app to other devices on your network. |
 | `NO_BROWSER` | unset | Set to `1` to stop the browser from opening automatically. |
 
+## What the scores mean
+
+Two numbers appear on each clip, and neither is measured engagement:
+
+- **Local score (0–100).** A heuristic from the signals below. It ranks clips against each other in this video only.
+- **Estimated watch rate (0–100%).** The share of viewers you might expect to still be watching at the end of the clip, shown on a worst-to-best scale with a label (Weak, Fair, Good, Excellent). With AI ranking on, the model supplies this guess. With it off, the local score is shown instead, marked "Local estimate".
+
+Neither is retention data from a platform. Treat them as a way to sort your options, then judge by watching.
+
 ## How the engine picks clips
 
 It isn't a crystal ball. It uses signals that tend to hold attention in short-form video:
@@ -98,7 +110,10 @@ run.py / run.bat / run.sh   one-click launcher
 clipper/
   config.py       settings (reads .env)
   download.py     video links via yt-dlp
-  media.py        FFmpeg: audio, loudness, cutting, thumbnails, captions
+  presets.py      platforms, quality levels, caption styles, rating bands
+  captions.py     word-timed ASS captions
+  collections_store.py  collections and their entries (JSON file)
+  media.py        FFmpeg: audio, loudness, cutting, thumbnails, MP3
   transcribe.py   Whisper speech-to-text, grouped into sentences
   candidates.py   all valid 30–120 s windows
   scoring.py      engagement heuristics and overlap-free selection
@@ -116,12 +131,18 @@ The web app talks to a small JSON API, which you can also use from scripts.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/jobs` | Start a project from a link (JSON body: `url`, `count`, `min_seconds`, `max_seconds`, `vertical`, `captions`, `use_llm`) |
+| `POST` | `/api/jobs` | Start a project from a link (JSON body: `url`, `count`, `min_seconds`, `max_seconds`, `platform`, `quality`, `captions`, `caption_style`, `caption_position`, `caption_uppercase`, `caption_color`, `use_llm`) |
 | `POST` | `/api/jobs/upload` | Start a project from an uploaded file (multipart form) |
 | `GET` | `/api/jobs` | List projects |
 | `GET` | `/api/jobs/{id}` | Project detail: progress, activity log, clips, warnings |
 | `DELETE` | `/api/jobs/{id}` | Delete a finished project |
-| `GET` | `/api/config` | Engine settings and what's enabled |
+| `GET` | `/api/config` | Engine settings, presets and what's enabled |
+| `GET` | `/api/clips` | Finished clips across projects (for adding to collections) |
+| `GET`, `POST` | `/api/collections` | List or create collections |
+| `GET`, `PATCH`, `DELETE` | `/api/collections/{id}` | Read, edit or delete a collection |
+| `POST` | `/api/collections/{id}/entries` | Add a clip (`job_id`, `clip_id`) |
+| `PATCH`, `DELETE` | `/api/collections/{id}/entries/{entry_id}` | Edit (title, status, note, label) or remove an entry |
+| `POST` | `/api/collections/{id}/entries/{entry_id}/move` | Reorder (`direction`: `up` or `down`, or `to_index`) |
 
 ## Tests
 
@@ -130,13 +151,16 @@ pip install pytest numpy httpx
 pytest -q
 ```
 
-The tests cover word grouping, candidate boundaries, scoring, overlap-free selection, LLM response parsing, caption timing, and project storage. The full pipeline has been run end to end on a test video, including through the browser.
+The tests cover word grouping, candidate boundaries, scoring, overlap-free selection, LLM response parsing, caption timing and styling, presets, watch-rate labels, collections, and project storage. The full pipeline has been run end to end on a test video, including through the browser.
 
 ## Limitations
 
 - **Speed depends on your computer.** Transcription is the slowest step on a CPU. A GPU or a smaller model helps.
-- **Scores are heuristics.** They approximate what holds attention. They don't predict results.
+- **Scores are heuristics and guesses.** Local scores and AI watch-rate estimates approximate what holds attention. They don't predict results.
 - **Crop is centred.** Talking-head footage works well. Wide or multi-speaker shots may need face tracking, which isn't included yet.
+- **Upscaling.** A 9:16 crop from a 16:9 source is narrower than the output, so it is scaled up and looks softer. 4K output from a 1080p source adds file size, not detail. The app warns you when this happens.
+- **Frame rate.** 60 and 120 fps exports from a 30 fps source repeat frames, so motion isn't smoother. Pick a higher frame-rate source for real gains.
+- **Heavy renders need memory.** 4K and high-frame-rate renders can use several hundred MB of RAM per clip. On low-memory machines, use the quick preset.
 - **Use content you have rights to.** Downloading from platforms may breach their terms. You are responsible for how you use the output.
 
 ## Contributing

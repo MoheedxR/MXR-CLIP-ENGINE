@@ -13,10 +13,12 @@ from pathlib import Path
 
 from . import config, llm
 from .candidates import build_candidates
+from .captions import build_ass
 from .download import download
-from .media import (MediaError, cut_clip, energy_profile, extract_audio, extract_thumbnail,
-                    normalise_energy, probe_duration, write_srt)
+from .media import (MediaError, cut_clip, energy_profile, export_mp3, extract_audio,
+                    extract_thumbnail, normalise_energy, probe_duration, probe_video)
 from .models import Candidate, Segment
+from .presets import PLATFORMS, QUALITY, rating_label, validate
 from .scoring import score_candidate, select_diverse
 from .transcribe import transcribe
 
@@ -28,8 +30,13 @@ class Params:
     count: int = 5
     min_seconds: float = config.MIN_CLIP_SECONDS
     max_seconds: float = config.MAX_CLIP_SECONDS
-    vertical: bool = True
+    platform: str = "tiktok"            # tiktok | shorts | reels
+    quality: str = "quick"              # quick | 4k30 | fps60 | fps120
     captions: bool = False
+    caption_style: str = "highlight"    # see presets.CAPTION_STYLES
+    caption_position: str = "bottom"    # top | middle | bottom
+    caption_uppercase: bool = False
+    caption_color: str = "yellow"       # see presets.ACCENT_COLORS
     use_llm: bool = True
 
 
@@ -53,12 +60,41 @@ def _fmt(sec: float) -> str:
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
 
+def watch_rate_for(c: Candidate) -> tuple[float, str]:
+    """Estimated watch rate (0-100) and where it came from.
+
+    'ai' is the model's guess when the LLM review ran. 'local' falls back to the
+    heuristic score. Neither is measured retention.
+    """
+    if c.llm and c.llm.get("watch_rate") is not None:
+        return round(float(c.llm["watch_rate"]), 1), "ai"
+    return round(c.heuristic, 1), "local"
+
+
+def _quality_warnings(src_info: dict, quality: dict, fps_wanted: int) -> list[str]:
+    msgs: list[str] = []
+    src_h, src_w = src_info["height"], src_info["width"]
+    crop_w = min(src_w, src_h * 9 / 16)
+    if crop_w < quality["width"]:
+        msgs.append(f"The source is {src_w}×{src_h}, so the 9:16 crop is about {int(crop_w)} px wide. "
+                    f"It will be upscaled to {quality['width']} px, which softens the picture.")
+    if quality["height"] > 2000 and src_h < 2000:
+        msgs.append("The source is below 4K. The 4K output is upscaled, so it adds size, not detail.")
+    if fps_wanted > 30 and src_info["fps"] < fps_wanted * 0.8:
+        msgs.append(f"The source runs at {src_info['fps']:g} fps. A {fps_wanted} fps export repeats frames, "
+                    "so motion will not be smoother than the source.")
+    return msgs
+
+
 def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None,
                  upload: Path | None = None, upload_name: str | None = None,
                  reporter: Reporter | None = None) -> dict:
     """Run the full pipeline inside job_dir and return a result dict."""
+    validate(params)
     rep = reporter or NullReporter()
     warnings: list[str] = []
+    quality = QUALITY[params.quality]
+    platform = PLATFORMS[params.platform]
 
     def warn(msg: str) -> None:
         warnings.append(msg)
@@ -71,12 +107,13 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
     # 1. Source video -------------------------------------------------------
     if source_url:
         rep.stage("downloading", 0.0, "Connecting to the video source")
-        rep.log(f"Fetching {source_url}")
+        rep.log(f"Fetching {source_url} (up to {quality['max_source']} px)")
 
         def dl_progress(frac: float, text: str) -> None:
             rep.stage("downloading", 0.15 * frac, text)
 
-        src, title = download(source_url, job_dir, on_progress=dl_progress)
+        src, title = download(source_url, job_dir, on_progress=dl_progress,
+                              max_height=quality["max_source"], prefer_fps=quality["fps"] > 30)
         rep.log(f'Downloaded "{title}"', "success")
     else:
         rep.stage("downloading", 0.05, "Preparing your file")
@@ -87,7 +124,10 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
         rep.log(f'Received "{upload_name or upload.name}"', "success")
 
     duration = probe_duration(src)
-    rep.log(f"Source length {_fmt(duration)}")
+    src_info = probe_video(src)
+    rep.log(f"Source is {_fmt(duration)} long, {src_info['width']}×{src_info['height']} at {src_info['fps']:g} fps")
+    for msg in _quality_warnings(src_info, quality, quality["fps"]):
+        warn(msg)
 
     # 2. Audio and loudness -------------------------------------------------
     rep.stage("audio", 0.16, "Extracting audio track")
@@ -124,7 +164,7 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
     for c in cands:
         score_candidate(c, units, energy_z)
     ranked = sorted(cands, key=lambda c: c.heuristic, reverse=True)
-    rep.log(f"Scored every candidate on hook, energy, pace, completeness and length")
+    rep.log("Scored every candidate on hook, energy, pace, completeness and length")
 
     # 5. Shortlist, then optional LLM re-rank -------------------------------
     shortlist = select_diverse(ranked, max(params.count * 3, 12))
@@ -135,10 +175,10 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
 
     if params.use_llm and llm.llm_enabled():
         rep.stage("ranking", 0.62, "AI is reviewing the shortlist")
-        rep.log(f"Sending {len(shortlist)} moments to {config.LLM_MODEL} for hook and clarity review")
+        rep.log(f"Sending {len(shortlist)} moments to {config.LLM_MODEL} for hook, clarity and watch-rate review")
         try:
             llm.rerank(shortlist)
-            rep.log("AI review complete. Titles and reasons added", "success")
+            rep.log("AI review complete. Titles, reasons and watch-rate estimates added", "success")
         except Exception as exc:  # network / auth / bad JSON: fall back gracefully
             log.exception("LLM re-rank failed")
             warn(f"AI review failed, using local scores only: {exc}")
@@ -164,35 +204,49 @@ def run_pipeline(job_dir: Path, params: Params, *, source_url: str | None = None
         rep.log(f"Rendering clip {rank}: {_fmt(c.start)} → {_fmt(c.end)} ({c.duration:.0f} s)")
         stem = f"clip_{rank:02d}"
         out_mp4 = clips_dir / f"{stem}.mp4"
-        srt = None
+        ass = None
         if params.captions:
-            srt = write_srt(units, c.start, c.end, clips_dir / f"{stem}.srt")
+            ass = clips_dir / f"{stem}.ass"
+            ass.write_text(build_ass(
+                units, c.start, c.end, width=quality["width"], height=quality["height"],
+                style=params.caption_style, position=params.caption_position,
+                uppercase=params.caption_uppercase, accent=params.caption_color,
+                bottom_margin=platform["caption_bottom"]), encoding="utf-8")
+        cut_kwargs = dict(width=quality["width"], height=quality["height"], fps=quality["fps"],
+                          crf=quality["crf"], preset=quality["preset"])
         try:
-            cut_clip(src, out_mp4, c.start, c.end, vertical=params.vertical, subtitles=srt)
-        except MediaError as exc:
-            if srt is None:
+            cut_clip(src, out_mp4, c.start, c.end, subtitles=ass, **cut_kwargs)
+        except MediaError:
+            if ass is None:
                 raise
             warn(f"{stem}: captions could not be burned in, exported without them")
-            cut_clip(src, out_mp4, c.start, c.end, vertical=params.vertical, subtitles=None)
+            cut_clip(src, out_mp4, c.start, c.end, subtitles=None, **cut_kwargs)
+            ass = None
+        mp3 = None
+        if quality["mp3"]:
+            mp3 = export_mp3(src, clips_dir / f"{stem}.mp3", c.start, c.end)
         thumb = extract_thumbnail(src, c.start + min(2.0, c.duration / 2), clips_dir / f"{stem}.jpg")
-        record = _clip_record(rank, stem, c, out_mp4, srt, thumb, units, job_dir)
+        record = _clip_record(rank, stem, c, out_mp4, ass, thumb, mp3, units, job_dir, params)
         clips.append(record)
         rep.clip(record)
-        rep.log(f"Clip {rank} ready · score {record['scores']['final']:.0f} · \"{record['title']}\"", "success")
+        rep.log(f"Clip {rank} ready · watch rate {record['watch_rate']:.0f} ({record['rating']}) · "
+                f"\"{record['title']}\"", "success")
 
     rep.stage("done", 1.0, "All clips are ready")
     rep.log("Finished. Preview and download your clips below", "success")
     return {
         "source_title": title,
         "source_duration": round(duration, 1),
+        "source_info": src_info,
         "clips": clips,
         "warnings": warnings,
         "llm_used": any(c.llm for c in final),
     }
 
 
-def _clip_record(rank: int, stem: str, c: Candidate, mp4: Path, srt: Path | None,
-                 thumb: Path, units: list[Segment], job_dir: Path) -> dict:
+def _clip_record(rank: int, stem: str, c: Candidate, mp4: Path, ass: Path | None,
+                 thumb: Path, mp3: Path | None, units: list[Segment], job_dir: Path,
+                 params: Params) -> dict:
     jobs_root = job_dir.parent
 
     def rel(p: Path | None) -> str | None:
@@ -200,6 +254,7 @@ def _clip_record(rank: int, stem: str, c: Candidate, mp4: Path, srt: Path | None
 
     first_units = [u.text for u in units[c.segment_range[0]:c.segment_range[1] + 1]][:2]
     title = (c.llm or {}).get("title") or " ".join(" ".join(first_units).split()[:8])
+    watch, source = watch_rate_for(c)
     return {
         "rank": rank,
         "id": stem,
@@ -209,6 +264,11 @@ def _clip_record(rank: int, stem: str, c: Candidate, mp4: Path, srt: Path | None
         "end": round(c.end, 2),
         "duration": round(c.duration, 2),
         "transcript": c.text,
+        "platform": params.platform,
+        "quality": params.quality,
+        "watch_rate": watch,
+        "watch_rate_source": source,
+        "rating": rating_label(watch),
         "scores": {
             "final": round(c.final, 1),
             "heuristic": round(c.heuristic, 1),
@@ -218,6 +278,7 @@ def _clip_record(rank: int, stem: str, c: Candidate, mp4: Path, srt: Path | None
         "files": {
             "video": rel(mp4),
             "thumbnail": rel(thumb),
-            "captions": rel(srt),
+            "audio": rel(mp3),
+            "captions": rel(ass),
         },
     }

@@ -46,7 +46,8 @@ def group_words(words: list[tuple[float, float, str]]) -> list[Segment]:
         if buf:
             text = "".join(w[2] for w in buf).strip()
             if text:
-                units.append(Segment(start=buf[0][0], end=buf[-1][1], text=text))
+                words = [(float(s), float(e), t.strip()) for s, e, t in buf if t.strip()]
+                units.append(Segment(start=buf[0][0], end=buf[-1][1], text=text, words=words))
             buf.clear()
 
     for s, e, tok in words:

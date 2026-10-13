@@ -5,10 +5,14 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Segment:
-    """A sentence-like unit of speech with timestamps (seconds)."""
+    """A sentence-like unit of speech with timestamps (seconds).
+
+    words holds (start, end, token) for each word, used for word-level captions.
+    """
     start: float
     end: float
     text: str
+    words: list = field(default_factory=list)
 
 
 @dataclass

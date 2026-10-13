@@ -9,15 +9,17 @@ from . import config
 ProgressFn = Callable[[float, str], None]  # (fraction 0-1, human message)
 
 
-def download(url: str, out_dir: Path, on_progress: ProgressFn | None = None) -> tuple[Path, str]:
-    """Download the best MP4-compatible stream up to MAX_DOWNLOAD_HEIGHT.
+def download(url: str, out_dir: Path, on_progress: ProgressFn | None = None,
+             max_height: int | None = None, prefer_fps: bool = False) -> tuple[Path, str]:
+    """Download the best MP4-compatible stream up to max_height.
 
+    prefer_fps asks yt-dlp to favour higher frame-rate streams when several exist.
     Returns (video_path, title).
     """
     import yt_dlp
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    h = config.MAX_DOWNLOAD_HEIGHT
+    h = max_height or config.MAX_DOWNLOAD_HEIGHT
 
     def hook(d: dict) -> None:
         if on_progress is None:
@@ -44,6 +46,8 @@ def download(url: str, out_dir: Path, on_progress: ProgressFn | None = None) -> 
         "restrictfilenames": True,
         "progress_hooks": [hook],
     }
+    if prefer_fps:
+        opts["format_sort"] = ["fps", "res", "br"]
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
     title = (info or {}).get("title") or "Untitled"

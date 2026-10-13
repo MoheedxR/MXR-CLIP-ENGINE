@@ -26,19 +26,25 @@ def _run(cmd: list[str], cwd: str | None = None) -> subprocess.CompletedProcess:
 
 
 def probe_duration(path: Path) -> float:
-    proc = _run([
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "json", str(path),
-    ])
+    proc = _run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "json", str(path)])
     return float(json.loads(proc.stdout)["format"]["duration"])
+
+
+def probe_video(path: Path) -> dict:
+    """Width, height and frame rate of the first video stream."""
+    proc = _run(["ffprobe", "-v", "error", "-select_streams", "v:0",
+                 "-show_entries", "stream=width,height,avg_frame_rate", "-of", "json", str(path)])
+    stream = json.loads(proc.stdout)["streams"][0]
+    num, _, den = stream.get("avg_frame_rate", "0/1").partition("/")
+    fps = float(num) / float(den) if den and float(den) else float(num or 0)
+    return {"width": int(stream["width"]), "height": int(stream["height"]), "fps": round(fps, 2)}
 
 
 def extract_audio(src: Path, wav_out: Path) -> Path:
     """Mono 16 kHz PCM WAV: what Whisper and the loudness analysis both need."""
-    _run([
-        "ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
-        "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav_out),
-    ])
+    _run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
+          "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav_out)])
     return wav_out
 
 
@@ -81,7 +87,7 @@ def _fmt_srt_time(t: float) -> str:
 
 
 def write_srt(segments: list[Segment], window_start: float, window_end: float, out: Path) -> Path:
-    """Captions for one clip, with times re-based to the clip's start."""
+    """Plain caption file for one clip, with times re-based to the clip's start."""
     lines: list[str] = []
     idx = 1
     for seg in segments:
@@ -95,27 +101,30 @@ def write_srt(segments: list[Segment], window_start: float, window_end: float, o
     return out
 
 
-def cut_clip(src: Path, out: Path, start: float, end: float, *,
-             vertical: bool = True, subtitles: Path | None = None) -> Path:
-    """Re-encode [start, end] into a social-friendly MP4.
+def cut_clip(src: Path, out: Path, start: float, end: float, *, width: int, height: int,
+             fps: int, crf: int, preset: str, subtitles: Path | None = None) -> Path:
+    """Render [start, end] as a vertical MP4 (9:16 centre crop).
 
-    vertical=True centre-crops to 9:16 and scales to 1080x1920.
-    subtitles, if given, is burned in. It is referenced by filename and ffmpeg
-    runs from its directory, which avoids escaping problems with the path.
+    subtitles is an ASS file, burned in by libass. It is referenced by filename
+    and ffmpeg runs from its folder, which avoids path-escaping problems.
     """
-    filters = []
-    if vertical:
-        filters.append("crop=w='min(iw,ih*9/16)':h=ih,scale=1080:1920")
+    filters = [
+        "crop=w='min(iw,ih*9/16)':h=ih",
+        f"scale={width}:{height}:flags=lanczos",
+        f"fps={fps}",
+    ]
     if subtitles is not None:
-        filters.append(
-            f"subtitles={subtitles.name}:force_style='FontName=DejaVu Sans,"
-            "FontSize=11,Bold=1,Alignment=2,MarginV=120,Outline=3,Shadow=0'"
-        )
+        filters.append(f"subtitles={subtitles.name}")
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{start:.3f}", "-i", str(src.resolve()),
-           "-t", f"{end - start:.3f}"]
-    if filters:
-        cmd += ["-vf", ",".join(filters)]
-    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", out.name]
+           "-t", f"{end - start:.3f}", "-vf", ",".join(filters),
+           "-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p",
+           "-profile:v", "high", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out.name]
     _run(cmd, cwd=str(out.parent.resolve()))
+    return out
+
+
+def export_mp3(src: Path, out: Path, start: float, end: float) -> Path:
+    """Audio-only MP3 for the same time range."""
+    _run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{start:.3f}", "-i", str(src.resolve()),
+          "-t", f"{end - start:.3f}", "-vn", "-c:a", "libmp3lame", "-q:a", "2", str(out.resolve())])
     return out

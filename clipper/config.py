@@ -24,10 +24,11 @@ _load_dotenv(ROOT / ".env")
 
 DATA_DIR = Path(os.getenv("CLIPPER_DATA_DIR", ROOT / "data")).resolve()
 JOBS_DIR = DATA_DIR / "jobs"
+COLLECTIONS_FILE = DATA_DIR / "collections.json"
 STATIC_DIR = ROOT / "static"
 
 APP_NAME = "MXR CLIP ENGINE"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "auto")

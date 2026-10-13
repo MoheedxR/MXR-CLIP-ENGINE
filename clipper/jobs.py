@@ -91,7 +91,7 @@ class JobStore:
             items = sorted(self._jobs.values(), key=lambda j: j["created_at"], reverse=True)
             return [{k: j.get(k) for k in ("id", "status", "stage", "progress", "message",
                                            "source_title", "source_url", "upload_name",
-                                           "created_at", "planned_clips")}
+                                           "created_at", "planned_clips", "params")}
                     | {"clip_count": len(j.get("clips") or [])}
                     for j in items]
 
@@ -157,6 +157,7 @@ class JobStore:
                 clips=result["clips"],
                 warnings=result["warnings"],
                 llm_used=result["llm_used"],
+                source_info=result.get("source_info"),
             )
         except Exception as exc:  # surface any failure to the UI
             log.exception("job %s failed", job_id)

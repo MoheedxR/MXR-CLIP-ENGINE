@@ -11,6 +11,8 @@
   const TERMINAL = new Set(["done", "failed"]);
   const STAGE_INDEX = { queued: -1, downloading: 0, audio: 0, transcribing: 1, scoring: 2, ranking: 2, clipping: 3, done: 4, failed: -1 };
   const STATUS_LABEL = { queued: "Queued", running: "Working", done: "Ready", failed: "Failed" };
+  const LABEL_HEX = { yellow: "#FFD400", cyan: "#22D3EE", pink: "#FF4D8D", lime: "#A3E635", violet: "#8B7BFF", grey: "#8891A6" };
+  const RATING_CLASS = { Weak: "weak", Fair: "fair", Good: "good", Excellent: "excellent" };
 
   const fmtClock = (sec) => {
     sec = Math.max(0, Math.round(sec || 0));
@@ -37,8 +39,11 @@
     const w = String(t || "?").replace(/[^\p{L}\p{N} ]/gu, " ").trim().split(/\s+/).filter(Boolean);
     return ((w[0]?.[0] || "?") + (w[1]?.[0] || "")).toUpperCase();
   };
-  const titleOf = (j) => j.source_title || j.upload_name ||
-    (j.source_url ? (() => { try { return new URL(j.source_url).hostname.replace(/^www\./, ""); } catch { return "Video link"; } })() : "Untitled project");
+  const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return "Video link"; } };
+  const titleOf = (j) => j.source_title || j.upload_name || (j.source_url ? hostOf(j.source_url) : "Untitled project");
+  const slug = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const pct = (v) => (v == null ? "" : `${Math.round(v)}%`);
+  const mediaUrl = (p) => (p ? `/media/${p}` : "");
 
   async function api(path, opts = {}) {
     const res = await fetch(path, opts);
@@ -53,6 +58,11 @@
     }
     return res.status === 204 ? null : res.json();
   }
+  const sendJson = (method, body) => ({
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 
   function toast(msg, kind = "") {
     const el = document.createElement("div");
@@ -64,23 +74,30 @@
 
   // ---------- state ----------
   const state = {
-    selectedId: null,
+    config: null,
+    route: { view: "home" },
+    form: { platform: "tiktok", quality: "quick", style: "highlight", position: "bottom", color: "yellow" },
+    busy: false,
     jobs: [],
-    job: null,            // latest detail for the selected project
-    listKey: "",
+    selectedId: null,
+    job: null,
+    logCount: 0,
     headerKey: "",
     alertKey: "",
-    logCount: 0,
-    clipEls: new Map(),   // clip id -> element
-    clipData: new Map(),  // clip id -> clip record
+    clipEls: new Map(),
+    clipData: new Map(),
+    clipSort: "best",
     detailLoadedFor: null,
-    busy: false,
+    collections: [],
+    collection: null,
+    picker: null,
   };
 
-  // ---------- engine info ----------
+  // ---------- engine info and option groups ----------
   async function loadConfig() {
     try {
       const c = await api("/api/config");
+      state.config = c;
       document.title = c.app_name || "MXR CLIP ENGINE";
       $("#engine-pill").classList.toggle("off", !c.llm_enabled);
       $("#engine-text").innerHTML = `${c.llm_enabled ? "AI ranking on" : "Local ranking"} · Whisper <b>${esc(c.whisper_model)}</b>`;
@@ -91,11 +108,79 @@
         $("#ai-row").classList.add("disabled");
         $("#ai-sub").textContent = "Add an LLM key in .env to enable";
       }
+      renderOptionGroups();
     } catch {
       $("#engine-text").textContent = "Engine offline";
       $("#engine-pill").classList.add("off");
     }
   }
+
+  function choiceButtons(items, value, cls = "") {
+    return items.map((it) => `<button type="button" class="choice ${cls}" role="radio" aria-checked="${it.id === value}" data-id="${esc(it.id)}"><span class="ch-t">${esc(it.label)}</span></button>`).join("");
+  }
+
+  function swatchButtons(ids, value, hexFor) {
+    return ids.map((id) => `<button type="button" class="swatch" role="radio" aria-checked="${id === value}" data-id="${esc(id)}" style="--sw:${hexFor(id)}" aria-label="${esc(id)}" title="${esc(id)}"></button>`).join("");
+  }
+
+  function renderOptionGroups() {
+    const c = state.config;
+    if (!c) return;
+    $("#quality-group").innerHTML = choiceButtons(c.qualities, state.form.quality, "q-choice");
+    $("#platform-group").innerHTML = choiceButtons(c.platforms, state.form.platform, "p-choice");
+    $("#style-group").innerHTML = c.caption_styles.map((s) => `<button type="button" class="style-card st-${esc(s.id)}" role="radio" aria-checked="${s.id === state.form.style}" data-id="${esc(s.id)}" title="${esc(s.hint)}">
+        <span class="sc-demo"><span class="sc-w1">Hook</span> <span class="sc-w2">it fast</span></span>
+        <span class="sc-name">${esc(s.label)}</span></button>`).join("");
+    $("#position-group").innerHTML = c.caption_positions.map((p) => `<button type="button" class="choice" role="radio" aria-checked="${p === state.form.position}" data-id="${esc(p)}"><span class="ch-t">${esc(p[0].toUpperCase() + p.slice(1))}</span></button>`).join("");
+    $("#color-group").innerHTML = swatchButtons(c.caption_colors.map((x) => x.id), state.form.color, (id) => LABEL_HEX[id] || c.caption_colors.find((x) => x.id === id).hex);
+    $("#coll-new-colors").innerHTML = swatchButtons(c.label_colors, "", (id) => LABEL_HEX[id]);
+    $("#coll-new-status").innerHTML = c.collection_statuses.map((s) => `<option>${esc(s)}</option>`).join("");
+    $("#coll-new-status").value = "Draft";
+    syncFormHints();
+  }
+
+  function syncFormHints() {
+    const c = state.config;
+    if (!c) return;
+    const q = c.qualities.find((x) => x.id === state.form.quality);
+    const p = c.platforms.find((x) => x.id === state.form.platform);
+    $("#quality-hint").textContent = q ? q.hint : "";
+    $("#platform-hint").textContent = p ? p.hint : "";
+    const style = state.form.style;
+    const color = state.form.color;
+    $("#style-group").style.setProperty("--cap", LABEL_HEX[color] || "#FFD400");
+    $("#color-group").style.setProperty("--cap", LABEL_HEX[color] || "#FFD400");
+  }
+
+  function pickGroup(groupId, key, value) {
+    state.form[key] = value;
+    $$(`#${groupId} [data-id]`).forEach((b) => b.setAttribute("aria-checked", String(b.dataset.id === value)));
+    syncFormHints();
+  }
+
+  $("#quality-group").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-id]"); if (b) pickGroup("quality-group", "quality", b.dataset.id);
+  });
+  $("#platform-group").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-id]"); if (b) pickGroup("platform-group", "platform", b.dataset.id);
+  });
+  $("#style-group").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-id]"); if (b) pickGroup("style-group", "style", b.dataset.id);
+  });
+  $("#position-group").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-id]"); if (b) pickGroup("position-group", "position", b.dataset.id);
+  });
+  $("#color-group").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-id]"); if (b) pickGroup("color-group", "color", b.dataset.id);
+  });
+  $("#coll-new-colors").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-id]"); if (!b) return;
+    const was = b.getAttribute("aria-checked") === "true";
+    $$("#coll-new-colors [data-id]").forEach((x) => x.setAttribute("aria-checked", "false"));
+    b.setAttribute("aria-checked", String(!was));
+  });
+
+  $("#captions").addEventListener("change", (e) => { $("#caption-panel").hidden = !e.target.checked; });
 
   // ---------- form ----------
   function setTab(name) {
@@ -110,17 +195,13 @@
   $$(".pick[data-min]").forEach((b) => b.addEventListener("click", () => {
     $$(".pick[data-min]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
   }));
-  function selectedLength() {
-    const pick = $(".pick[aria-pressed='true']") || $(".pick[data-min]");
-    return { min: +pick.dataset.min, max: +pick.dataset.max };
-  }
 
   const fileInput = $("#file");
   function showFile(file) {
     $("#dz-empty").hidden = !!file;
     $("#dz-file").hidden = !file;
     if (!file) { fileInput.value = ""; return; }
-    $("#dz-name").textContent = `${file.name}`;
+    $("#dz-name").textContent = file.name;
     $("#dz-name").title = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB`;
   }
   fileInput.addEventListener("change", () => showFile(fileInput.files[0] || null));
@@ -147,19 +228,28 @@
     if (on) btn.insertAdjacentHTML("afterbegin", '<span class="spinner" aria-hidden="true"></span>');
   }
 
+  function formValues() {
+    const pick = $(".pick[aria-pressed='true']") || $(".pick[data-min]");
+    return {
+      count: +$("#count").value,
+      min_seconds: +pick.dataset.min,
+      max_seconds: +pick.dataset.max,
+      platform: state.form.platform,
+      quality: state.form.quality,
+      captions: $("#captions").checked,
+      caption_style: state.form.style,
+      caption_position: state.form.position,
+      caption_uppercase: $("#caption_uppercase").checked,
+      caption_color: state.form.color,
+      use_llm: $("#use_llm").checked && !$("#use_llm").disabled,
+    };
+  }
+
   $("#create-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     if (state.busy) return;
     const isLink = $("#tab-link").getAttribute("aria-selected") === "true";
-    const { min, max } = selectedLength();
-    const common = {
-      count: +$("#count").value,
-      min_seconds: min,
-      max_seconds: max,
-      vertical: $("#vertical").checked,
-      captions: $("#captions").checked,
-      use_llm: $("#use_llm").checked && !$("#use_llm").disabled,
-    };
+    const common = formValues();
 
     setBusy(true);
     try {
@@ -171,11 +261,7 @@
           $("#url").focus();
           return;
         }
-        job = await api("/api/jobs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url, ...common }),
-        });
+        job = await api("/api/jobs", sendJson("POST", { url, ...common }));
         $("#url").value = "";
       } else {
         const file = fileInput.files[0];
@@ -188,7 +274,7 @@
       }
       toast("Project started. Watch the activity log for live progress.", "ok");
       await refreshList();
-      select(job.id);
+      location.hash = `#job/${job.id}`;
     } catch (err) {
       toast(err.message || "Something went wrong.", "err");
     } finally {
@@ -198,7 +284,7 @@
 
   // ---------- projects list ----------
   function renderList(jobs) {
-    const key = JSON.stringify(jobs.map((j) => [j.id, j.status, j.stage, j.source_title, j.clip_count]) ) + state.selectedId;
+    const key = JSON.stringify(jobs.map((j) => [j.id, j.status, j.stage, j.source_title, j.clip_count])) + state.selectedId;
     if (key === state.listKey) return;
     state.listKey = key;
     $("#projects-count").textContent = jobs.length;
@@ -223,16 +309,17 @@
       </li>`;
     }).join("");
   }
+  state.listKey = "";
 
   $("#projects").addEventListener("click", async (e) => {
     const del = e.target.closest("[data-del]");
     if (!del) return;
     e.preventDefault();
     const id = del.dataset.del;
-    if (!confirm("Delete this project and its clips? This can't be undone.")) return;
+    if (!confirm("Delete this project and its clips? Any collection entries from it will be removed too.")) return;
     try {
       await api(`/api/jobs/${id}`, { method: "DELETE" });
-      if (state.selectedId === id) clearSelection();
+      if (state.selectedId === id) location.hash = "#/";
       toast("Project deleted.");
       state.listKey = "";
       refreshList();
@@ -242,43 +329,50 @@
   });
 
   // ---------- project view ----------
-  function ring(score) {
-    const s = Math.max(0, Math.min(100, Math.round(score || 0)));
-    const cls = s >= 70 ? "hi" : s >= 55 ? "mid" : "lo";
-    const C = 2 * Math.PI * 16;
-    return `<div class="ring ${cls}" title="Engagement score (0–100)">
-      <svg viewBox="0 0 40 40" aria-hidden="true">
-        <circle class="ring-bg" cx="20" cy="20" r="16" fill="none" stroke-width="3.5"/>
-        <circle class="ring-arc" cx="20" cy="20" r="16" fill="none" stroke-width="3.5" stroke-linecap="round"
-          stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${(C * (1 - s / 100)).toFixed(1)}"/>
-      </svg>
-      <span>${s}</span>
+  function ratingBadge(rating) {
+    return rating ? `<span class="rating r-${RATING_CLASS[rating] || "fair"}">${esc(rating)}</span>` : "";
+  }
+
+  function watchMeter(c) {
+    if (c.watch_rate == null) return "";
+    const v = Math.max(0, Math.min(100, Math.round(c.watch_rate)));
+    const src = c.watch_rate_source === "ai" ? "AI estimate" : "Local estimate";
+    return `<div class="wr r-${RATING_CLASS[c.rating] || "fair"}" title="Estimated share of viewers still watching at the end. A guess, not measured retention.">
+      <div class="wr-head"><span class="wr-k">Est. watch rate</span><span class="wr-v">${v}%</span>${ratingBadge(c.rating)}</div>
+      <div class="wr-track" style="--v:${v}" aria-hidden="true"><span class="wr-fill" style="width:${v}%"></span><span class="wr-dot" style="left:${v}%"></span></div>
+      <div class="wr-ends" aria-hidden="true"><span>Worst</span><span>Best</span></div>
+      <div class="wr-src">${esc(src)} · a model guess, not measured</div>
     </div>`;
   }
 
   function clipCard(c) {
     const f = c.files || {};
+    const platform = state.config?.platforms.find((p) => p.id === c.platform)?.label;
+    const quality = state.config?.qualities.find((q) => q.id === c.quality)?.label;
+    const meta = [`${fmtClock(c.start)} → ${fmtClock(c.end)}`, `${Math.round(c.duration)}s`, platform, quality].filter(Boolean);
     return `<article class="clip" data-id="${esc(c.id)}">
       <div class="clip-media">
         <span class="clip-badge">#${c.rank}</span>
         <button class="clip-expand" type="button" data-expand="${esc(c.id)}" aria-label="Open larger preview">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg>
         </button>
-        <video controls playsinline preload="metadata" src="/media/${esc(f.video)}" poster="/media/${esc(f.thumbnail)}"></video>
+        <video controls playsinline preload="metadata" src="${esc(mediaUrl(f.video))}" poster="${esc(mediaUrl(f.thumbnail))}"></video>
       </div>
       <div class="clip-body">
         <div class="clip-top">
           <div style="min-width:0">
             <div class="clip-title">${esc(c.title || "Untitled clip")}</div>
-            <div class="clip-meta">${fmtClock(c.start)} → ${fmtClock(c.end)} · ${Math.round(c.duration)}s</div>
+            <div class="clip-meta">${meta.map(esc).join(" · ")}</div>
           </div>
-          ${ring(c.scores?.final)}
         </div>
+        ${watchMeter(c)}
         ${c.reason ? `<div class="clip-reason">${esc(c.reason)}</div>` : ""}
         ${c.transcript ? `<details class="tr"><summary>Transcript</summary><p>${esc(c.transcript)}</p></details>` : ""}
         <div class="clip-actions">
-          <a class="btn btn-primary btn-sm" href="/media/${esc(f.video)}" download>Download MP4</a>
-          ${f.captions ? `<a class="btn btn-ghost btn-sm" href="/media/${esc(f.captions)}" download>Captions</a>` : ""}
+          <a class="btn btn-primary btn-sm" href="${esc(mediaUrl(f.video))}" download>Download MP4</a>
+          ${f.audio ? `<a class="btn btn-ghost btn-sm" href="${esc(mediaUrl(f.audio))}" download>MP3</a>` : ""}
+          ${f.captions ? `<a class="btn btn-ghost btn-sm" href="${esc(mediaUrl(f.captions))}" download title="Caption file (ASS)">Captions</a>` : ""}
+          <button class="btn btn-ghost btn-sm" type="button" data-add-clip="${esc(c.id)}">+ Collection</button>
         </div>
       </div>
     </article>`;
@@ -295,48 +389,51 @@
     </div>`;
   }
 
+  function sortClips(list) {
+    const arr = list.slice();
+    if (state.clipSort === "best") arr.sort((a, b) => (b.watch_rate ?? -1) - (a.watch_rate ?? -1) || a.rank - b.rank);
+    else if (state.clipSort === "worst") arr.sort((a, b) => (a.watch_rate ?? 101) - (b.watch_rate ?? 101) || a.rank - b.rank);
+    else arr.sort((a, b) => a.rank - b.rank);
+    return arr;
+  }
+
   function renderClips(job) {
     const grid = $("#clips");
-    const clips = [...(job.clips || [])].sort((a, b) => a.rank - b.rank);
-
-    // Real clips: add only new ones so existing videos keep playing.
+    const clips = job.clips || [];
     for (const c of clips) {
       state.clipData.set(c.id, c);
       if (!state.clipEls.has(c.id)) {
-        const wrap = document.createElement("div");
-        wrap.innerHTML = clipCard(c).trim();
-        const el = wrap.firstElementChild;
-        state.clipEls.set(c.id, el);
-        grid.appendChild(el);
+        const tpl = document.createElement("div");
+        tpl.innerHTML = clipCard(c).trim();
+        state.clipEls.set(c.id, tpl.firstElementChild);
       }
     }
+    const sorted = sortClips(clips).map((c) => c.id);
+    const current = Array.from(grid.children).filter((n) => n.classList.contains("clip")).map((n) => n.dataset.id);
+    // Only move cards when the order really changed: moving a playing <video> pauses it.
+    if (sorted.join() !== current.join()) {
+      sorted.forEach((id) => grid.appendChild(state.clipEls.get(id)));
+    }
+    grid.querySelectorAll(".clip-pending, .clips-empty").forEach((n) => n.remove());
 
-    // Pending placeholders are rebuilt each time at the end of the grid.
-    $$(".clip-pending, .clips-empty", grid).forEach((n) => n.remove());
-    const total = job.planned_clips || (job.status === "running" || job.status === "queued" ? job.params?.count || 0 : 0);
+    const total = job.planned_clips || job.params?.count || 0;
     const pendingCount = Math.max(0, total - clips.length);
     const running = job.status === "running" || job.status === "queued";
-    const html = [];
     for (let i = 0; i < pendingCount; i++) {
-      const index = clips.length + i + 1;
-      html.push(pendingCard(index, total, i === 0 && job.stage === "clipping"));
+      grid.insertAdjacentHTML("beforeend", pendingCard(clips.length + i + 1, total, i === 0 && job.stage === "clipping"));
     }
     if (!clips.length && !pendingCount) {
-      html.push(job.status === "done"
+      grid.insertAdjacentHTML("beforeend", job.status === "done"
         ? `<div class="clips-empty"><strong>No clips met the bar</strong>Try a longer video or a wider clip length.</div>`
         : `<div class="clips-empty"><strong>No clips yet</strong>Clips appear here one at a time as they render.</div>`);
     }
-    if (html.length) grid.insertAdjacentHTML("beforeend", html.join(""));
     $("#clips-count").textContent = `${clips.length} / ${total || (running ? "…" : clips.length)}`;
   }
 
   function renderLog(job) {
     const el = $("#console");
     const entries = job.log || [];
-    if (entries.length < state.logCount) {  // log was trimmed; start over
-      el.innerHTML = "";
-      state.logCount = 0;
-    }
+    if (entries.length < state.logCount) { el.innerHTML = ""; state.logCount = 0; }
     if (entries.length === state.logCount) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
     const frag = document.createDocumentFragment();
@@ -355,19 +452,23 @@
   }
 
   function renderHeader(job) {
-    const key = [job.id, job.status, titleOf(job), job.params?.count, job.params?.min_seconds, job.params?.max_seconds,
-      job.params?.vertical, job.params?.captions, job.llm_used].join("|");
+    const p = job.params || {};
+    const key = [job.id, job.status, titleOf(job), JSON.stringify(p), job.llm_used, job.source_duration].join("|");
     if (key === state.headerKey) return;
     state.headerKey = key;
+    const cfg = state.config || { platforms: [], qualities: [], caption_styles: [] };
     $("#p-kicker").textContent = job.source_url ? "Video link" : "Uploaded file";
     $("#p-title").textContent = titleOf(job);
     $("#p-title").title = titleOf(job);
-    const p = job.params || {};
+    const plat = cfg.platforms.find((x) => x.id === p.platform);
+    const qual = cfg.qualities.find((x) => x.id === p.quality);
+    const style = cfg.caption_styles.find((x) => x.id === p.caption_style);
     const chips = [
-      `<span class="chip">${esc(p.min_seconds)}–${esc(p.max_seconds)}s</span>`,
-      `<span class="chip">Up to ${esc(p.count)} clips</span>`,
-      p.vertical ? `<span class="chip">9:16</span>` : "",
-      p.captions ? `<span class="chip">Captions</span>` : "",
+      p.min_seconds != null ? `<span class="chip">${esc(p.min_seconds)}–${esc(p.max_seconds)}s</span>` : "",
+      p.count ? `<span class="chip">Up to ${esc(p.count)} clips</span>` : "",
+      plat ? `<span class="chip">${esc(plat.label)} · 9:16</span>` : "",
+      qual ? `<span class="chip">${esc(qual.label)}</span>` : "",
+      p.captions ? `<span class="chip">Captions${style ? ` · ${esc(style.label)}` : ""}</span>` : "",
       job.llm_used ? `<span class="chip ai">AI ranked</span>` : "",
       job.source_duration ? `<span class="chip">Source ${fmtSpan(job.source_duration)}</span>` : "",
     ];
@@ -378,10 +479,10 @@
   }
 
   function renderProgress(job) {
-    const pct = Math.round((job.progress || 0) * 100);
-    $("#p-pct").textContent = pct;
-    $("#bar").setAttribute("aria-valuenow", String(pct));
-    $("#bar-fill").style.width = `${pct}%`;
+    const percent = Math.round((job.progress || 0) * 100);
+    $("#p-pct").textContent = percent;
+    $("#bar").setAttribute("aria-valuenow", String(percent));
+    $("#bar-fill").style.width = `${percent}%`;
     $("#bar").classList.toggle("idle", TERMINAL.has(job.status));
     $("#p-msg").textContent = job.message || "Working…";
 
@@ -409,7 +510,6 @@
     const key = JSON.stringify([job.status, job.error, job.warnings]);
     if (key === state.alertKey) return;
     state.alertKey = key;
-    const box = $("#alerts");
     const parts = [];
     for (const w of job.warnings || []) {
       parts.push(`<div class="alert warn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg><div>${esc(w)}</div></div>`);
@@ -417,13 +517,11 @@
     if (job.status === "failed") {
       parts.push(`<div class="alert err"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg><div><strong>This project stopped.</strong> ${esc(job.error || "Unknown error")}<br>Check the activity log for details, then start a new project.</div></div>`);
     }
-    box.innerHTML = parts.join("");
+    $("#alerts").innerHTML = parts.join("");
   }
 
   function renderProject(job) {
     state.job = job;
-    $("#welcome").hidden = true;
-    $("#project").hidden = false;
     renderHeader(job);
     renderProgress(job);
     renderAlerts(job);
@@ -447,29 +545,10 @@
     $("#clips-count").textContent = "0 / 0";
   }
 
-  function select(id) {
-    if (state.selectedId !== id) {
-      state.selectedId = id;
-      resetProjectView();
-      state.detailLoadedFor = null;
-      history.replaceState(null, "", `#job/${id}`);
-      state.listKey = "";
-      renderList(state.jobs);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    }
-    refreshDetail();
-  }
-
-  function clearSelection() {
-    state.selectedId = null;
-    resetProjectView();
-    state.detailLoadedFor = null;
-    history.replaceState(null, "", location.pathname);
-    $("#project").hidden = true;
-    $("#welcome").hidden = false;
-    state.listKey = "";
-    renderList(state.jobs);
-  }
+  $("#clip-sort").addEventListener("change", (e) => {
+    state.clipSort = e.target.value;
+    if (state.job) renderClips(state.job);
+  });
 
   // ---------- polling ----------
   async function refreshList() {
@@ -487,7 +566,7 @@
     const id = state.selectedId;
     if (!id) return;
     const summary = state.jobs.find((j) => j.id === id);
-    if (state.jobs.length && !summary) { clearSelection(); return; }
+    if (state.jobs.length && !summary) { location.hash = "#/"; return; }
     if (summary && TERMINAL.has(summary.status) && state.detailLoadedFor === id) return;
     try {
       const job = await api(`/api/jobs/${id}`);
@@ -498,11 +577,12 @@
   }
 
   async function tick() {
-    await refreshList();
-    await refreshDetail();
+    if (state.route.view === "home" || state.route.view === "job") {
+      await refreshList();
+      await refreshDetail();
+    }
     setTimeout(tick, 1200);
   }
-  // Keep the elapsed timer moving between polls
   setInterval(() => { if (state.job) updateSub(state.job); }, 1000);
 
   $("#console").addEventListener("scroll", (e) => {
@@ -515,51 +595,465 @@
     $("#jump").hidden = true;
   });
 
-  // ---------- expanded preview ----------
+  // ---------- preview dialog ----------
   const dialog = $("#preview");
-  function openPreview(id) {
-    const c = state.clipData.get(id);
-    if (!c) return;
-    const f = c.files || {};
-    $("#preview-kicker").textContent = `Clip #${c.rank} · ${fmtClock(c.start)} → ${fmtClock(c.end)} · ${Math.round(c.duration)}s`;
-    $("#preview-title").textContent = c.title || "Untitled clip";
-    $("#preview-reason").textContent = c.reason || "";
+  function openPreview({ video, poster, kicker, title, reason, links = [] }) {
+    if (!video) return;
+    $("#preview-kicker").textContent = kicker || "";
+    $("#preview-title").textContent = title || "Untitled clip";
+    $("#preview-reason").textContent = reason || "";
     const v = $("#preview-video");
-    v.src = `/media/${f.video}`;
-    v.poster = f.thumbnail ? `/media/${f.thumbnail}` : "";
-    $("#preview-download").href = `/media/${f.video}`;
+    v.src = mediaUrl(video);
+    v.poster = poster ? mediaUrl(poster) : "";
+    $("#preview-links").innerHTML = [
+      `<a class="btn btn-primary btn-sm" href="${esc(mediaUrl(video))}" download>Download MP4</a>`,
+      ...links.map((l) => `<a class="btn btn-ghost btn-sm" href="${esc(mediaUrl(l.href))}" download>${esc(l.label)}</a>`),
+    ].join("");
     dialog.showModal();
     v.play().catch(() => {});
   }
   $("#clips").addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-expand]");
-    if (btn) openPreview(btn.dataset.expand);
+    const expand = e.target.closest("[data-expand]");
+    if (expand) {
+      const c = state.clipData.get(expand.dataset.expand);
+      if (!c) return;
+      const f = c.files || {};
+      openPreview({
+        video: f.video, poster: f.thumbnail, reason: c.reason,
+        title: c.title,
+        kicker: `Clip #${c.rank} · ${fmtClock(c.start)} → ${fmtClock(c.end)} · ${Math.round(c.duration)}s${c.watch_rate != null ? ` · watch rate ${pct(c.watch_rate)} (${c.rating})` : ""}`,
+        links: [f.audio && { href: f.audio, label: "MP3" }, f.captions && { href: f.captions, label: "Captions" }].filter(Boolean),
+      });
+      return;
+    }
+    const add = e.target.closest("[data-add-clip]");
+    if (add) {
+      const c = state.clipData.get(add.dataset.addClip);
+      if (c && state.job) openCollectionPicker({ job_id: state.job.id, clip_id: c.id, title: c.title });
+    }
   });
   $("#preview-close").addEventListener("click", () => dialog.close());
   dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });
   dialog.addEventListener("close", () => { const v = $("#preview-video"); v.pause(); v.removeAttribute("src"); v.load(); });
 
+  // ---------- collections: list ----------
+  function collectionCard(c) {
+    const slugStatus = slug(c.status);
+    return `<a class="coll-card" href="#/collections/${esc(c.id)}">
+      <div class="cc-top">
+        <span class="status-pill s-${esc(slugStatus)}">${esc(c.status)}</span>
+        ${c.label ? `<span class="label-chip lc-${esc(c.label_color || "grey")}">${esc(c.label)}</span>` : ""}
+      </div>
+      <h3 class="cc-name">${esc(c.name)}</h3>
+      <div class="cc-foot"><span>${c.clip_count} clip${c.clip_count === 1 ? "" : "s"}</span><span>Updated ${esc(fmtAgo(c.updated_at))}</span></div>
+    </a>`;
+  }
+
+  async function loadCollections() {
+    try {
+      state.collections = await api("/api/collections");
+    } catch (err) {
+      toast(err.message, "err");
+    }
+    $("#coll-grid").innerHTML = state.collections.map(collectionCard).join("");
+    $("#coll-empty").hidden = state.collections.length > 0;
+  }
+
+  $("#coll-new-toggle").addEventListener("click", () => setNewCollectionOpen(true));
+  $("#coll-new-cancel").addEventListener("click", () => setNewCollectionOpen(false));
+  function setNewCollectionOpen(open) {
+    $("#coll-new").hidden = !open;
+    $("#coll-new-toggle").setAttribute("aria-expanded", String(open));
+    if (open) setTimeout(() => $("#coll-new input[name=name]").focus(), 0);
+  }
+
+  $("#coll-new").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const color = $("#coll-new-colors [aria-checked='true']")?.dataset.id || null;
+    try {
+      const col = await api("/api/collections", sendJson("POST", {
+        name: f.name.value.trim(),
+        status: f.status.value,
+        label: f.label.value.trim(),
+        label_color: color,
+      }));
+      f.reset();
+      $("#coll-new-status").value = "Draft";
+      $$("#coll-new-colors [data-id]").forEach((x) => x.setAttribute("aria-checked", "false"));
+      setNewCollectionOpen(false);
+      toast("Collection created.", "ok");
+      location.hash = `#/collections/${col.id}`;
+    } catch (err) {
+      toast(err.message, "err");
+    }
+  });
+
+  // ---------- collections: detail ----------
+  const STATUSES_FALLBACK = ["Draft", "In review", "Ready", "Scheduled", "Posted"];
+
+  function renderCollectionHead(col) {
+    const statuses = state.config?.collection_statuses || STATUSES_FALLBACK;
+    const colors = state.config?.label_colors || Object.keys(LABEL_HEX);
+    $("#coll-head").innerHTML = `
+      <div class="ch-grid">
+        <label class="field grow"><span class="label">Name</span>
+          <input class="input ch-name" maxlength="80" value="${esc(col.name)}" aria-label="Collection name"></label>
+        <label class="field"><span class="label">Status</span>
+          <select class="input ch-status" aria-label="Status">${statuses.map((s) => `<option ${s === col.status ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></label>
+      </div>
+      <div class="ch-grid">
+        <label class="field grow"><span class="label">Label</span>
+          <input class="input ch-label" maxlength="30" value="${esc(col.label)}" placeholder="e.g. Client A, Promo" aria-label="Label"></label>
+        <div class="field"><span class="label">Colour</span>
+          <div class="swatches ch-colors" role="radiogroup" aria-label="Label colour">${swatchButtons(colors, col.label_color || "", (id) => LABEL_HEX[id])}</div></div>
+      </div>
+      <label class="field"><span class="label">Notes</span>
+        <textarea class="input ch-notes" rows="3" maxlength="4000" placeholder="What is this collection for? Posting plan, feedback, reminders…" aria-label="Notes">${esc(col.notes)}</textarea></label>
+      <div class="ch-foot">
+        <span class="save-state" id="save-state" aria-live="polite">Saved</span>
+        <button class="btn btn-ghost btn-sm ch-delete" type="button">Delete collection</button>
+      </div>`;
+  }
+
+  function entryRow(e, index, total) {
+    const f = e;
+    return `<li class="entry" data-eid="${esc(e.id)}">
+      <div class="entry-thumb">
+        ${e.thumbnail ? `<img src="${esc(mediaUrl(e.thumbnail))}" alt="" loading="lazy">` : `<span class="entry-noimg">▶</span>`}
+        <span class="entry-no">${index + 1}</span>
+      </div>
+      <div class="entry-main">
+        <input class="input e-title" maxlength="200" value="${esc(e.title)}" aria-label="Clip title">
+        <div class="entry-meta">
+          <span>${esc(e.source_title || "Untitled project")}</span>
+          <span>${fmtClock(e.start)} → ${fmtClock(e.end)} · ${Math.round(e.duration || 0)}s</span>
+          ${e.watch_rate != null ? `<span class="meta-rate r-${RATING_CLASS[e.rating] || "fair"}">${pct(e.watch_rate)} · ${esc(e.rating || "")}</span>` : ""}
+        </div>
+        <div class="entry-row2">
+          <input class="input e-note" maxlength="1000" value="${esc(e.note)}" placeholder="Add a note…" aria-label="Note for this clip">
+          <input class="input e-label" maxlength="30" value="${esc(e.label || "")}" placeholder="Label" aria-label="Clip label">
+        </div>
+      </div>
+      <div class="entry-side">
+        <select class="input e-status" aria-label="Clip status">${(state.config?.collection_statuses || STATUSES_FALLBACK).map((s) => `<option ${s === e.status ? "selected" : ""}>${esc(s)}</option>`).join("")}</select>
+        <div class="entry-btns">
+          <button class="icon-btn e-up" type="button" aria-label="Move up" ${index === 0 ? "disabled" : ""}>↑</button>
+          <button class="icon-btn e-down" type="button" aria-label="Move down" ${index === total - 1 ? "disabled" : ""}>↓</button>
+          <button class="icon-btn e-play" type="button" aria-label="Preview">▶</button>
+          <a class="icon-btn" href="${esc(mediaUrl(f.video))}" download aria-label="Download MP4" title="Download MP4">⤓</a>
+          <button class="icon-btn e-remove" type="button" aria-label="Remove from collection" title="Remove">✕</button>
+        </div>
+      </div>
+    </li>`;
+  }
+
+  function renderEntries(col) {
+    const entries = col.entries || [];
+    $("#coll-count").textContent = entries.length;
+    $("#entries").innerHTML = entries.map((e, i) => entryRow(e, i, entries.length)).join("");
+    $("#entries-empty").hidden = entries.length > 0;
+  }
+
+  async function loadCollection(id) {
+    try {
+      const col = await api(`/api/collections/${id}`);
+      if (state.route.view !== "collection" || state.route.id !== id) return;
+      state.collection = col;
+      renderCollectionHead(col);
+      renderEntries(col);
+    } catch (err) {
+      toast(err.message, "err");
+      location.hash = "#/collections";
+    }
+  }
+
+  function setSave(text, kind = "") {
+    const el = $("#save-state");
+    if (!el) return;
+    el.textContent = text;
+    el.className = `save-state ${kind}`;
+  }
+
+  async function patchCollection(fields) {
+    const col = state.collection;
+    if (!col) return;
+    setSave("Saving…");
+    try {
+      const updated = await api(`/api/collections/${col.id}`, sendJson("PATCH", fields));
+      state.collection = { ...col, ...updated, entries: col.entries };
+      setSave("Saved", "ok");
+    } catch (err) {
+      setSave("Not saved", "err");
+      toast(err.message, "err");
+      renderCollectionHead(col);
+    }
+  }
+
+  const viewCollection = $("#view-collection");
+  viewCollection.addEventListener("change", (e) => {
+    if (e.target.matches(".ch-status")) patchCollection({ status: e.target.value });
+  });
+  viewCollection.addEventListener("focusout", (e) => {
+    const col = state.collection;
+    if (!col) return;
+    const t = e.target;
+    if (t.matches(".ch-name")) {
+      const v = t.value.trim();
+      if (!v) { t.value = col.name; toast("A collection needs a name.", "err"); return; }
+      if (v !== col.name) patchCollection({ name: v });
+    } else if (t.matches(".ch-label")) {
+      if (t.value.trim() !== col.label) patchCollection({ label: t.value.trim() });
+    } else if (t.matches(".ch-notes")) {
+      if (t.value !== col.notes) patchCollection({ notes: t.value });
+    }
+  });
+  viewCollection.addEventListener("click", async (e) => {
+    const sw = e.target.closest(".ch-colors [data-id]");
+    if (sw && state.collection) {
+      const next = sw.dataset.id;
+      $$(".ch-colors [data-id]").forEach((x) => x.setAttribute("aria-checked", String(x === sw)));
+      patchCollection({ label_color: next });
+      return;
+    }
+    if (e.target.closest(".ch-delete") && state.collection) {
+      if (!confirm(`Delete “${state.collection.name}”? The clips stay in their projects.`)) return;
+      try {
+        await api(`/api/collections/${state.collection.id}`, { method: "DELETE" });
+        toast("Collection deleted.");
+        location.hash = "#/collections";
+      } catch (err) { toast(err.message, "err"); }
+      return;
+    }
+    if (e.target.closest("#coll-add")) { openClipPicker(); return; }
+  });
+
+  // Entry edits (delegated)
+  const entriesEl = $("#entries");
+  async function patchEntry(eid, fields) {
+    const col = state.collection;
+    if (!col) return;
+    try {
+      const updated = await api(`/api/collections/${col.id}/entries/${eid}`, sendJson("PATCH", fields));
+      const i = col.entries.findIndex((x) => x.id === eid);
+      if (i >= 0) col.entries[i] = { ...col.entries[i], ...updated };
+    } catch (err) {
+      toast(err.message, "err");
+      renderEntries(col);
+    }
+  }
+  entriesEl.addEventListener("change", (e) => {
+    const li = e.target.closest(".entry");
+    if (li && e.target.matches(".e-status")) patchEntry(li.dataset.eid, { status: e.target.value });
+  });
+  entriesEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && e.target.matches("input")) e.target.blur();
+  });
+  entriesEl.addEventListener("focusout", (e) => {
+    const li = e.target.closest(".entry");
+    const col = state.collection;
+    if (!li || !col) return;
+    const entry = col.entries.find((x) => x.id === li.dataset.eid);
+    if (!entry) return;
+    const t = e.target;
+    if (t.matches(".e-title")) {
+      const v = t.value.trim();
+      if (!v) { t.value = entry.title; return; }
+      if (v !== entry.title) patchEntry(entry.id, { title: v });
+    } else if (t.matches(".e-note")) {
+      if (t.value !== entry.note) patchEntry(entry.id, { note: t.value });
+    } else if (t.matches(".e-label")) {
+      if (t.value.trim() !== (entry.label || "")) patchEntry(entry.id, { label: t.value.trim() });
+    }
+  });
+  entriesEl.addEventListener("click", async (e) => {
+    const li = e.target.closest(".entry");
+    const col = state.collection;
+    if (!li || !col) return;
+    const eid = li.dataset.eid;
+    const entry = col.entries.find((x) => x.id === eid);
+    if (!entry) return;
+    if (e.target.closest(".e-play")) {
+      openPreview({
+        video: entry.video, poster: entry.thumbnail, title: entry.title, reason: entry.note,
+        kicker: `${entry.source_title || "Clip"} · ${fmtClock(entry.start)} → ${fmtClock(entry.end)}`,
+        links: [entry.audio && { href: entry.audio, label: "MP3" }, entry.captions && { href: entry.captions, label: "Captions" }].filter(Boolean),
+      });
+    } else if (e.target.closest(".e-up") || e.target.closest(".e-down")) {
+      const direction = e.target.closest(".e-up") ? "up" : "down";
+      try {
+        await api(`/api/collections/${col.id}/entries/${eid}/move`, sendJson("POST", { direction }));
+        await loadCollection(col.id);
+      } catch (err) { toast(err.message, "err"); }
+    } else if (e.target.closest(".e-remove")) {
+      if (!confirm("Remove this clip from the collection? The clip itself is kept in its project.")) return;
+      try {
+        await api(`/api/collections/${col.id}/entries/${eid}`, { method: "DELETE" });
+        await loadCollection(col.id);
+        toast("Removed from collection.");
+      } catch (err) { toast(err.message, "err"); }
+    }
+  });
+
+  // ---------- picker dialog ----------
+  const picker = $("#picker");
+  $("#picker-close").addEventListener("click", () => picker.close());
+  picker.addEventListener("click", (e) => { if (e.target === picker) picker.close(); });
+
+  function pickerRow(html) { return `<div class="picker-row">${html}</div>`; }
+
+  // From a clip card: choose (or create) a collection
+  async function openCollectionPicker(clip) {
+    $("#picker-title").textContent = "Add to a collection";
+    const list = $("#picker-list");
+    list.innerHTML = `<div class="picker-note">Choose a collection for “${esc(clip.title)}”.</div>
+      <form class="picker-new" id="picker-new">
+        <input class="input" maxlength="80" placeholder="New collection name" aria-label="New collection name">
+        <button class="btn btn-primary btn-sm" type="submit">Create &amp; add</button>
+      </form><div class="picker-items">Loading…</div>`;
+    picker.showModal();
+    const items = $("#picker-list .picker-items");
+    try {
+      const cols = await api("/api/collections");
+      items.innerHTML = cols.length
+        ? cols.map((c) => pickerRow(`<span class="pr-main"><strong>${esc(c.name)}</strong><span class="pr-sub">${esc(c.status)} · ${c.clip_count} clip${c.clip_count === 1 ? "" : "s"}</span></span>
+            <button class="btn btn-ghost btn-sm" type="button" data-add-to="${esc(c.id)}">Add</button>`)).join("")
+        : `<div class="picker-note">No collections yet. Create one above.</div>`;
+    } catch (err) { items.textContent = err.message; }
+
+    list.onclick = async (ev) => {
+      const b = ev.target.closest("[data-add-to]");
+      if (!b) return;
+      await addClipTo(b.dataset.addTo, clip);
+    };
+    $("#picker-new").onsubmit = async (ev) => {
+      ev.preventDefault();
+      const name = ev.target.querySelector("input").value.trim();
+      if (!name) return;
+      try {
+        const col = await api("/api/collections", sendJson("POST", { name }));
+        await addClipTo(col.id, clip, col.name);
+      } catch (err) { toast(err.message, "err"); }
+    };
+  }
+
+  async function addClipTo(cid, clip, name) {
+    try {
+      await api(`/api/collections/${cid}/entries`, sendJson("POST", { job_id: clip.job_id, clip_id: clip.clip_id }));
+      picker.close();
+      const label = name || (state.collections.find((c) => c.id === cid) || {}).name || "collection";
+      toast(`Added to “${label}”.`, "ok");
+    } catch (err) { toast(err.message, "err"); }
+  }
+
+  // From a collection: pick finished clips from any project
+  async function openClipPicker() {
+    const col = state.collection;
+    if (!col) return;
+    $("#picker-title").textContent = "Add clips";
+    const list = $("#picker-list");
+    list.innerHTML = `<div class="picker-note">Finished clips from all projects. Clips already here are greyed out.</div><div class="picker-items">Loading…</div>`;
+    picker.showModal();
+    const items = $("#picker-list .picker-items");
+    try {
+      const clips = await api("/api/clips");
+      const have = new Set(col.entries.map((e) => `${e.job_id}/${e.clip_id}`));
+      if (!clips.length) { items.innerHTML = `<div class="picker-note">No finished clips yet. Create some first.</div>`; return; }
+      const groups = new Map();
+      for (const c of clips) {
+        const key = c.source_title || "Untitled project";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(c);
+      }
+      items.innerHTML = Array.from(groups.entries()).map(([src, arr]) => `
+        <div class="picker-group"><div class="pg-title">${esc(src)}</div>
+        ${arr.map((c) => {
+          const added = have.has(`${c.job_id}/${c.clip_id}`);
+          return pickerRow(`${c.thumbnail ? `<img class="pr-thumb" src="${esc(mediaUrl(c.thumbnail))}" alt="" loading="lazy">` : `<span class="pr-thumb pr-none">▶</span>`}
+            <span class="pr-main"><strong>${esc(c.title)}</strong><span class="pr-sub">${c.watch_rate != null ? `${pct(c.watch_rate)} · ${esc(c.rating)}` : "Not rated"}</span></span>
+            <button class="btn btn-ghost btn-sm" type="button" data-pick="${esc(c.job_id)}|${esc(c.clip_id)}" ${added ? "disabled" : ""}>${added ? "Added" : "Add"}</button>`);
+        }).join("")}</div>`).join("");
+    } catch (err) { items.textContent = err.message; }
+
+    list.onclick = async (ev) => {
+      const b = ev.target.closest("[data-pick]");
+      if (!b || b.disabled) return;
+      const [job_id, clip_id] = b.dataset.pick.split("|");
+      try {
+        await api(`/api/collections/${col.id}/entries`, sendJson("POST", { job_id, clip_id }));
+        b.disabled = true;
+        b.textContent = "Added";
+        await loadCollection(col.id);
+      } catch (err) { toast(err.message, "err"); }
+    };
+  }
+
   // ---------- routing ----------
-  const idFromHash = () => {
-    const m = location.hash.match(/^#job\/([a-z0-9]+)$/i);
-    return m ? m[1] : null;
-  };
-  window.addEventListener("hashchange", () => {
-    const id = idFromHash();
-    if (id) select(id);
-    else if (state.selectedId) clearSelection();
-  });
-  $("#new-btn").addEventListener("click", () => {
-    if (state.selectedId) clearSelection();
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    setTimeout(() => $("#url").focus({ preventScroll: true }), 350);
-  });
+  function parseRoute() {
+    const h = location.hash.replace(/^#/, "");
+    let m = h.match(/^\/?collections\/([a-z0-9]+)$/i);
+    if (m) return { view: "collection", id: m[1] };
+    if (/^\/?collections(\?|$)/i.test(h)) {
+      const q = new URLSearchParams(h.split("?")[1] || "");
+      return { view: "collections", isNew: q.get("new") === "1" };
+    }
+    m = h.match(/^job\/([a-z0-9]+)$/i);
+    if (m) return { view: "job", id: m[1] };
+    return { view: "home" };
+  }
+
+  function showView(view) {
+    const map = { home: "#view-home", job: "#view-job", collections: "#view-collections", collection: "#view-collection" };
+    for (const [k, sel] of Object.entries(map)) $(sel).hidden = k !== view;
+    document.body.dataset.view = view;
+    const sidebarVisible = view === "home" || view === "job";
+    $("#sidebar").hidden = !sidebarVisible;
+    $("#nav-clips").toggleAttribute("aria-current", sidebarVisible);
+    $("#nav-collections").toggleAttribute("aria-current", !sidebarVisible);
+  }
+
+  function onRoute() {
+    const r = parseRoute();
+    const prev = state.route;
+    state.route = r;
+    showView(r.view === "collection" ? "collection" : r.view);
+
+    if (r.view === "job") {
+      if (state.selectedId !== r.id) {
+        state.selectedId = r.id;
+        resetProjectView();
+        state.detailLoadedFor = null;
+        state.listKey = "";
+        renderList(state.jobs);
+        window.scrollTo({ top: 0 });
+      }
+      refreshDetail();
+    } else {
+      if (state.selectedId) { state.selectedId = null; resetProjectView(); state.listKey = ""; renderList(state.jobs); }
+    }
+
+    if (r.view === "home") {
+      setTimeout(() => $("#url")?.focus({ preventScroll: true }), 0);
+    }
+    if (r.view === "collections") {
+      loadCollections().then(() => { if (r.isNew) setNewCollectionOpen(true); });
+      if (r.isNew) setNewCollectionOpen(true);
+    }
+    if (r.view === "collection") {
+      if (!prev || prev.view !== "collection" || prev.id !== r.id || !state.collection || state.collection.id !== r.id) {
+        state.collection = null;
+        $("#coll-head").innerHTML = `<div class="picker-note">Loading…</div>`;
+        $("#entries").innerHTML = "";
+        loadCollection(r.id);
+      }
+    }
+    window.scrollTo({ top: 0 });
+  }
+
+  window.addEventListener("hashchange", onRoute);
 
   // ---------- boot ----------
   loadConfig();
-  refreshList().then(() => {
-    const id = idFromHash();
-    if (id) select(id);
-  });
+  refreshList().then(() => onRoute());
   setTimeout(tick, 1200);
 })();

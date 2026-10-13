@@ -37,8 +37,11 @@ def _user_prompt(batch: list[Candidate]) -> str:
     return (
         "Score each candidate clip. Return a JSON object of this exact shape:\n"
         '{"clips": [{"id": <int>, "hook": <0-10>, "standalone": <0-10>, '
-        '"emotional_payoff": <0-10>, "title": "<max 60 chars, punchy, no false claims>", '
+        '"emotional_payoff": <0-10>, "watch_rate": <0-100 integer>, '
+        '"title": "<max 60 chars, punchy, no false claims>", '
         '"reason": "<one sentence>"}]}\n\n'
+        "watch_rate is your honest estimate of the percentage of viewers who would still be "
+        "watching at the end of this clip. Use the full range; most clips land between 20 and 70.\n\n"
         "Candidates:\n" + "\n\n".join(items)
     )
 
@@ -72,6 +75,7 @@ def apply_llm_scores(batch: list[Candidate], parsed: dict) -> None:
             "hook": _clamp(entry.get("hook")),
             "standalone": _clamp(entry.get("standalone")),
             "emotional_payoff": _clamp(entry.get("emotional_payoff")),
+            "watch_rate": _clamp(entry.get("watch_rate"), 0.0, 100.0),
             "title": str(entry.get("title", "")).strip()[:80],
             "reason": str(entry.get("reason", "")).strip()[:300],
         }

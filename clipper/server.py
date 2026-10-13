@@ -13,12 +13,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from . import config, llm
+from . import config, llm, presets
+from .collections_store import CollectionError, CollectionStore, LABEL_COLORS, NotFound, STATUSES
 from .jobs import JobStore
 from .pipeline import Params
 
 app = FastAPI(title=config.APP_NAME, version=config.APP_VERSION)
 store = JobStore(config.JOBS_DIR)
+collections = CollectionStore(config.COLLECTIONS_FILE)
 
 ALLOWED_UPLOAD_EXT = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".mp3", ".wav", ".m4a"}
 
@@ -28,8 +30,13 @@ class JobRequest(BaseModel):
     count: int = Field(5, ge=1, le=20)
     min_seconds: float = Field(config.MIN_CLIP_SECONDS, ge=5, le=600)
     max_seconds: float = Field(config.MAX_CLIP_SECONDS, ge=10, le=600)
-    vertical: bool = True
+    platform: str = "tiktok"
+    quality: str = "quick"
     captions: bool = False
+    caption_style: str = "highlight"
+    caption_position: str = "bottom"
+    caption_uppercase: bool = False
+    caption_color: str = "yellow"
     use_llm: bool = True
 
     @field_validator("url")
@@ -50,9 +57,59 @@ class JobRequest(BaseModel):
 
 
 def _params(req: JobRequest) -> Params:
-    return Params(count=req.count, min_seconds=req.min_seconds, max_seconds=req.max_seconds,
-                  vertical=req.vertical, captions=req.captions, use_llm=req.use_llm)
+    params = Params(count=req.count, min_seconds=req.min_seconds, max_seconds=req.max_seconds,
+                    platform=req.platform, quality=req.quality, captions=req.captions,
+                    caption_style=req.caption_style, caption_position=req.caption_position,
+                    caption_uppercase=req.caption_uppercase, caption_color=req.caption_color,
+                    use_llm=req.use_llm)
+    try:
+        presets.validate(params)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return params
 
+
+class CollectionCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    status: str = "Draft"
+    label: str = Field("", max_length=30)
+    label_color: str | None = None
+    notes: str = Field("", max_length=4000)
+
+
+class CollectionPatch(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=80)
+    status: str | None = None
+    label: str | None = Field(None, max_length=30)
+    label_color: str | None = None
+    notes: str | None = Field(None, max_length=4000)
+
+
+class EntryAdd(BaseModel):
+    job_id: str
+    clip_id: str
+
+
+class EntryPatch(BaseModel):
+    title: str | None = Field(None, min_length=1, max_length=200)
+    status: str | None = None
+    note: str | None = Field(None, max_length=1000)
+    label: str | None = Field(None, max_length=30)
+    label_color: str | None = None
+
+
+class EntryMove(BaseModel):
+    direction: str | None = None
+    to_index: int | None = None
+
+
+def _collection_error(exc: Exception):
+    if isinstance(exc, NotFound):
+        raise HTTPException(404, str(exc))
+    raise HTTPException(400, str(exc))
+
+
+# --- config and projects -------------------------------------------------------
 
 @app.get("/api/config")
 def get_config():
@@ -64,6 +121,13 @@ def get_config():
         "whisper_model": config.WHISPER_MODEL,
         "min_seconds": config.MIN_CLIP_SECONDS,
         "max_seconds": config.MAX_CLIP_SECONDS,
+        "platforms": [{"id": k, **{x: v[x] for x in ("label", "hint")}} for k, v in presets.PLATFORMS.items()],
+        "qualities": [{"id": k, **{x: v[x] for x in ("label", "hint", "fps")}} for k, v in presets.QUALITY.items()],
+        "caption_styles": [{"id": k, **v} for k, v in presets.CAPTION_STYLES.items()],
+        "caption_positions": list(presets.CAPTION_POSITIONS),
+        "caption_colors": [{"id": k, "hex": v} for k, v in presets.ACCENT_COLORS.items()],
+        "collection_statuses": list(STATUSES),
+        "label_colors": list(LABEL_COLORS),
     }
 
 
@@ -88,7 +152,23 @@ def delete_job(job_id: str):
         raise HTTPException(409, "This project is still processing. Delete it once it finishes.")
     if not found:
         raise HTTPException(404, "job not found")
+    collections.remove_job(job_id)  # cascade: no collection keeps clips from a deleted project
     return Response(status_code=204)
+
+
+@app.get("/api/clips")
+def list_clips():
+    """Every finished clip across projects, for the 'add to collection' picker."""
+    out = []
+    for job in store.list_jobs():
+        if job["status"] != "done":
+            continue
+        full = store.get(job["id"]) or {}
+        for clip in full.get("clips", []):
+            out.append({"job_id": job["id"], "clip_id": clip["id"], "title": clip["title"],
+                        "source_title": full.get("source_title"), "watch_rate": clip.get("watch_rate"),
+                        "rating": clip.get("rating"), "thumbnail": clip["files"].get("thumbnail")})
+    return out
 
 
 @app.post("/api/jobs", status_code=202)
@@ -107,8 +187,13 @@ async def create_job_from_upload(
     count: int = Form(5),
     min_seconds: float = Form(config.MIN_CLIP_SECONDS),
     max_seconds: float = Form(config.MAX_CLIP_SECONDS),
-    vertical: bool = Form(True),
+    platform: str = Form("tiktok"),
+    quality: str = Form("quick"),
     captions: bool = Form(False),
+    caption_style: str = Form("highlight"),
+    caption_position: str = Form("bottom"),
+    caption_uppercase: bool = Form(False),
+    caption_color: str = Form("yellow"),
     use_llm: bool = Form(True),
 ):
     ext = Path(file.filename or "").suffix.lower()
@@ -116,7 +201,10 @@ async def create_job_from_upload(
         raise HTTPException(400, f"unsupported file type: {ext or 'none'}")
     try:
         req = JobRequest(count=count, min_seconds=min_seconds, max_seconds=max_seconds,
-                         vertical=vertical, captions=captions, use_llm=use_llm)
+                         platform=platform, quality=quality, captions=captions,
+                         caption_style=caption_style, caption_position=caption_position,
+                         caption_uppercase=caption_uppercase, caption_color=caption_color,
+                         use_llm=use_llm)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     params = _params(req)
@@ -128,6 +216,105 @@ async def create_job_from_upload(
             out.write(chunk)
     store.submit(job["id"], params, upload=dest)
     return job
+
+
+# --- collections ---------------------------------------------------------------
+
+@app.get("/api/collections")
+def list_collections():
+    return collections.list()
+
+
+@app.post("/api/collections", status_code=201)
+def create_collection(body: CollectionCreate):
+    try:
+        return collections.create(body.name, status=body.status, label=body.label,
+                                  label_color=body.label_color, notes=body.notes)
+    except CollectionError as exc:
+        _collection_error(exc)
+
+
+@app.get("/api/collections/{cid}")
+def get_collection(cid: str):
+    try:
+        return collections.get(cid)
+    except NotFound as exc:
+        _collection_error(exc)
+
+
+@app.patch("/api/collections/{cid}")
+def patch_collection(cid: str, body: CollectionPatch):
+    try:
+        return collections.update(cid, body.model_dump(exclude_unset=True))
+    except (NotFound, CollectionError) as exc:
+        _collection_error(exc)
+
+
+@app.delete("/api/collections/{cid}", status_code=204)
+def delete_collection(cid: str):
+    try:
+        collections.delete(cid)
+    except NotFound as exc:
+        _collection_error(exc)
+    return Response(status_code=204)
+
+
+@app.post("/api/collections/{cid}/entries", status_code=201)
+def add_entry(cid: str, body: EntryAdd):
+    job = store.get(body.job_id)
+    if not job:
+        raise HTTPException(404, "project not found")
+    clip = next((c for c in job.get("clips", []) if c["id"] == body.clip_id), None)
+    if clip is None:
+        raise HTTPException(404, "clip not found")
+    snapshot = {
+        "job_id": body.job_id,
+        "clip_id": body.clip_id,
+        "title": clip["title"],
+        "source_title": job.get("source_title"),
+        "start": clip["start"],
+        "end": clip["end"],
+        "duration": clip["duration"],
+        "watch_rate": clip.get("watch_rate"),
+        "watch_rate_source": clip.get("watch_rate_source"),
+        "rating": clip.get("rating"),
+        "platform": clip.get("platform"),
+        "quality": clip.get("quality"),
+        "video": clip["files"].get("video"),
+        "thumbnail": clip["files"].get("thumbnail"),
+        "audio": clip["files"].get("audio"),
+        "captions": clip["files"].get("captions"),
+    }
+    try:
+        return collections.add_entry(cid, snapshot)
+    except (NotFound, CollectionError) as exc:
+        _collection_error(exc)
+
+
+@app.patch("/api/collections/{cid}/entries/{eid}")
+def patch_entry(cid: str, eid: str, body: EntryPatch):
+    try:
+        return collections.update_entry(cid, eid, body.model_dump(exclude_unset=True))
+    except (NotFound, CollectionError) as exc:
+        _collection_error(exc)
+
+
+@app.delete("/api/collections/{cid}/entries/{eid}", status_code=204)
+def delete_entry(cid: str, eid: str):
+    try:
+        collections.remove_entry(cid, eid)
+    except NotFound as exc:
+        _collection_error(exc)
+    return Response(status_code=204)
+
+
+@app.post("/api/collections/{cid}/entries/{eid}/move", status_code=204)
+def move_entry(cid: str, eid: str, body: EntryMove):
+    try:
+        collections.move_entry(cid, eid, direction=body.direction, to_index=body.to_index)
+    except (NotFound, CollectionError) as exc:
+        _collection_error(exc)
+    return Response(status_code=204)
 
 
 # Static assets (CSS/JS), clip files and thumbnails served from the job folders

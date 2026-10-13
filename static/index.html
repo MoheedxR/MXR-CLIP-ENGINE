@@ -4,32 +4,34 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MXR CLIP ENGINE</title>
-<meta name="description" content="Turn long videos into short, captioned clips ranked by engagement potential. Runs locally.">
+<meta name="description" content="Turn long videos into short, captioned clips ranked by estimated watch rate. Runs locally.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%238b7bff'/%3E%3Cstop offset='1' stop-color='%2322d3ee'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='9' fill='url(%23g)'/%3E%3Cpath d='M13 10.5v11l9-5.5z' fill='white'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/app.css">
 </head>
-<body>
+<body data-view="home">
 <div class="ambient" aria-hidden="true"></div>
 
 <header class="topbar">
-  <a class="brand" href="#top" aria-label="MXR CLIP ENGINE home">
+  <a class="brand" href="#/" aria-label="MXR CLIP ENGINE home">
     <span class="logo" aria-hidden="true">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M7 4.5v15a1 1 0 0 0 1.55.84l11.2-7.5a1 1 0 0 0 0-1.68L8.55 3.66A1 1 0 0 0 7 4.5z" fill="currentColor"/></svg>
     </span>
     <span class="brand-name">MXR CLIP ENGINE</span>
   </a>
-  <div class="top-actions">
+  <nav class="top-actions" aria-label="Main">
     <span class="engine-pill" id="engine-pill"><span class="dot"></span><span id="engine-text">Connecting…</span></span>
-    <button class="btn btn-ghost btn-sm" id="new-btn" type="button">
+    <a class="nav-link" id="nav-clips" href="#/">Clips</a>
+    <a class="nav-link" id="nav-collections" href="#/collections">Collections</a>
+    <a class="btn btn-primary btn-sm" id="new-btn" href="#/collections?new=1">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       New project
-    </button>
-  </div>
+    </a>
+  </nav>
 </header>
 
-<div class="app" id="top">
-  <!-- ============ Sidebar: create + projects ============ -->
-  <aside class="sidebar">
+<div class="app">
+  <!-- ============ Sidebar: create + projects (home and project views) ============ -->
+  <aside class="sidebar" id="sidebar">
     <section class="card create-card" aria-labelledby="create-title">
       <div class="card-head">
         <h2 id="create-title">New clips</h2>
@@ -38,14 +40,8 @@
 
       <form id="create-form" novalidate>
         <div class="segmented" role="tablist" aria-label="Video source">
-          <button type="button" role="tab" id="tab-link" aria-controls="panel-link" aria-selected="true" data-tab="link">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg>
-            Link
-          </button>
-          <button type="button" role="tab" id="tab-file" aria-controls="panel-file" aria-selected="false" data-tab="file">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
-            File
-          </button>
+          <button type="button" role="tab" id="tab-link" aria-controls="panel-link" aria-selected="true" data-tab="link">Link</button>
+          <button type="button" role="tab" id="tab-file" aria-controls="panel-file" aria-selected="false" data-tab="file">File</button>
         </div>
 
         <div id="panel-link" role="tabpanel" aria-labelledby="tab-link" class="field-block">
@@ -84,6 +80,14 @@
           </button>
         </div>
 
+        <span class="label" id="quality-label">Quality</span>
+        <div class="choice-grid choice-4" role="radiogroup" aria-labelledby="quality-label" id="quality-group"></div>
+        <p class="hint" id="quality-hint"></p>
+
+        <span class="label" id="platform-label">Platform <span class="label-sub">· all 9:16</span></span>
+        <div class="choice-grid choice-3" role="radiogroup" aria-labelledby="platform-label" id="platform-group"></div>
+        <p class="hint" id="platform-hint"></p>
+
         <div class="settings">
           <label class="setting">
             <span class="setting-label">Number of clips</span>
@@ -94,16 +98,27 @@
               <option value="10">10</option>
             </select>
           </label>
+
           <label class="setting toggle-row">
-            <span><span class="setting-label">Vertical 9:16</span><span class="setting-sub">Crop for Shorts, Reels, TikTok</span></span>
-            <input type="checkbox" class="switch" id="vertical" checked>
-          </label>
-          <label class="setting toggle-row">
-            <span><span class="setting-label">Burn in captions</span><span class="setting-sub">Word-accurate subtitles on the video</span></span>
+            <span><span class="setting-label">Captions</span><span class="setting-sub">Word-timed subtitles burned into the video</span></span>
             <input type="checkbox" class="switch" id="captions">
           </label>
+
+          <div class="caption-panel" id="caption-panel" hidden>
+            <span class="label">Style</span>
+            <div class="style-grid" id="style-group" role="radiogroup" aria-label="Caption style"></div>
+            <span class="label">Position</span>
+            <div class="segmented seg-3" id="position-group" role="radiogroup" aria-label="Caption position"></div>
+            <span class="label">Accent colour</span>
+            <div class="swatches" id="color-group" role="radiogroup" aria-label="Accent colour"></div>
+            <label class="setting toggle-row compact">
+              <span><span class="setting-label">UPPERCASE</span></span>
+              <input type="checkbox" class="switch" id="caption_uppercase">
+            </label>
+          </div>
+
           <label class="setting toggle-row" id="ai-row">
-            <span><span class="setting-label">AI ranking</span><span class="setting-sub" id="ai-sub">Uses an LLM to refine picks</span></span>
+            <span><span class="setting-label">AI ranking</span><span class="setting-sub" id="ai-sub">Uses an LLM to refine picks and estimate watch rate</span></span>
             <input type="checkbox" class="switch" id="use_llm" checked>
           </label>
         </div>
@@ -126,13 +141,12 @@
     </section>
   </aside>
 
-  <!-- ============ Main ============ -->
-  <main class="main">
-    <!-- Empty state -->
-    <section class="welcome" id="welcome">
+  <main class="main" id="main">
+    <!-- Home: welcome -->
+    <section class="welcome" id="view-home">
       <p class="kicker">Long video in · short clips out</p>
       <h1>Find the moments<br>people actually <span class="grad">watch</span></h1>
-      <p class="lead">Add a video. The engine transcribes it, scores every 30–120 second window for hook, energy and clarity, then renders the best ones as ready-to-post clips.</p>
+      <p class="lead">Add a video. The engine transcribes it, scores every 30–120 second window, estimates how long viewers would keep watching, and renders the best ones sized for TikTok, Shorts or Reels.</p>
       <div class="steps-3">
         <div class="step-card">
           <span class="step-num">01</span>
@@ -146,14 +160,14 @@
         </div>
         <div class="step-card">
           <span class="step-num">03</span>
-          <h3>Preview & post</h3>
-          <p>Each clip appears as soon as it renders. Download the MP4 and captions.</p>
+          <h3>Preview &amp; collect</h3>
+          <p>Each clip appears as soon as it renders. Group the keepers into a collection.</p>
         </div>
       </div>
     </section>
 
     <!-- Project view -->
-    <section class="project" id="project" hidden>
+    <section class="project" id="view-job" hidden>
       <header class="project-head">
         <div class="project-titles">
           <p class="kicker" id="p-kicker">Project</p>
@@ -188,7 +202,17 @@
         <section class="card clips-card" aria-labelledby="clips-title">
           <div class="card-head">
             <h2 id="clips-title">Clips</h2>
-            <span class="count-badge" id="clips-count">0 / 0</span>
+            <div class="head-tools">
+              <label class="mini-select" title="Order clips by estimated watch rate">
+                <span>Order</span>
+                <select id="clip-sort" aria-label="Order clips">
+                  <option value="best">Best first</option>
+                  <option value="worst">Worst first</option>
+                  <option value="ranked">Engine order</option>
+                </select>
+              </label>
+              <span class="count-badge" id="clips-count">0 / 0</span>
+            </div>
           </div>
           <div class="clips" id="clips"></div>
         </section>
@@ -203,6 +227,58 @@
         </section>
       </div>
     </section>
+
+    <!-- Collections list -->
+    <section class="collections" id="view-collections" hidden>
+      <header class="page-head">
+        <div>
+          <p class="kicker">Group &amp; organise</p>
+          <h1>Collections</h1>
+          <p class="lead">Gather clips into collections, label them, set their status, add notes and put them in the order you want to post.</p>
+        </div>
+        <button class="btn btn-primary btn-sm" id="coll-new-toggle" type="button" aria-expanded="false" aria-controls="coll-new">+ New collection</button>
+      </header>
+
+      <form class="card new-coll" id="coll-new" hidden>
+        <div class="field-row">
+          <label class="field grow"><span class="label">Name</span>
+            <input class="input" name="name" maxlength="80" required placeholder="e.g. Summer launch week" autocomplete="off"></label>
+          <label class="field"><span class="label">Status</span>
+            <select class="input" name="status" id="coll-new-status"></select></label>
+        </div>
+        <div class="field-row">
+          <label class="field grow"><span class="label">Label</span>
+            <input class="input" name="label" maxlength="30" placeholder="e.g. Client A, Promo" autocomplete="off"></label>
+          <div class="field"><span class="label">Colour</span>
+            <div class="swatches" id="coll-new-colors"></div></div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="coll-new-cancel">Cancel</button>
+          <button type="submit" class="btn btn-primary btn-sm">Create collection</button>
+        </div>
+      </form>
+
+      <div class="coll-grid" id="coll-grid"></div>
+      <div class="coll-empty" id="coll-empty" hidden>
+        <strong>No collections yet</strong>
+        <span>Create one, then add clips from any project.</span>
+      </div>
+    </section>
+
+    <!-- Collection detail -->
+    <section class="collection" id="view-collection" hidden>
+      <a class="back-link" href="#/collections">← All collections</a>
+      <div class="card coll-head" id="coll-head"></div>
+
+      <div class="card coll-clips">
+        <div class="card-head">
+          <h2>Clips <span class="count-badge" id="coll-count">0</span></h2>
+          <button class="btn btn-primary btn-sm" id="coll-add" type="button">+ Add clips</button>
+        </div>
+        <ol class="entries" id="entries"></ol>
+        <div class="clips-empty" id="entries-empty" hidden><strong>No clips here yet</strong>Use “Add clips” to pick from your finished projects.</div>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -211,7 +287,7 @@
   <span>Only process videos you have the rights to use.</span>
 </footer>
 
-<!-- Expanded preview -->
+<!-- Expanded preview (clips and collection entries) -->
 <dialog id="preview" class="preview-dialog" aria-labelledby="preview-title">
   <div class="preview-inner">
     <div class="preview-head">
@@ -224,8 +300,22 @@
     <video id="preview-video" controls playsinline></video>
     <div class="preview-foot">
       <p id="preview-reason"></p>
-      <a class="btn btn-primary btn-sm" id="preview-download" download>Download MP4</a>
+      <div class="preview-links" id="preview-links"></div>
     </div>
+  </div>
+</dialog>
+
+<!-- Add clips to a collection -->
+<dialog id="picker" class="picker-dialog" aria-labelledby="picker-title">
+  <div class="picker-inner">
+    <div class="preview-head">
+      <div>
+        <div class="kicker">Collection</div>
+        <h3 id="picker-title">Add clips</h3>
+      </div>
+      <button class="icon-btn" type="button" id="picker-close" aria-label="Close">✕</button>
+    </div>
+    <div class="picker-list" id="picker-list"></div>
   </div>
 </dialog>
 
